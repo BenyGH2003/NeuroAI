@@ -5,11 +5,18 @@ import os
 from groq import Groq
 from bs4 import BeautifulSoup
 import time
+import httpx
+from groq import Groq
 
-# Hardcoded API keys (replace with your actual keys or use secrets in Colab)
-GROQ_API_KEY = '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'
+# Hardcoded API key (consider using secrets management in production)
+GROQ_API_KEY = 'gsk_2PZlIqVZTFCOR85s72aGWGdyb3FY9IodxSkfEctFEllVzVyc0a'
 SERPER_API_KEY = 'edf28dbbb85930e14c617ad0eb0479799de050c1'
-client = Groq(api_key=GROQ_API_KEY, base_url="https://groq.com")
+
+# Create a custom HTTP client with proxies explicitly disabled
+http_client = httpx.Client(proxies=None)
+
+# Initialize the Groq client with the custom HTTP client
+client = Groq(api_key=GROQ_API_KEY, http_client=http_client)
 
 # --- Helper Functions for Database Update ---
 def serper_search(query, api_key, page=1):
