@@ -9,7 +9,7 @@ import time
 # Hardcoded API keys (replace with your actual keys or use secrets in Colab)
 GROQ_API_KEY = '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'
 SERPER_API_KEY = 'edf28dbbb85930e14c617ad0eb0479799de050c1'
-client = Groq(api_key=GROQ_API_KEY)
+client = Groq(api_key=GROQ_API_KEY, base_url="https://groq.com")
 
 # --- Helper Functions for Database Update ---
 def serper_search(query, api_key, page=1):
