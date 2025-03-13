@@ -8,15 +8,26 @@ import time
 import httpx
 from groq import Groq
 
-# Hardcoded API key (consider using secrets management in production)
+# Hardcoded API keys (consider using secrets management in production)
 GROQ_API_KEY = 'gsk_2PZlIqVZTFCOR85s72aGWGdyb3FY9IodxSkfEctFEllVzVyc0a'
 SERPER_API_KEY = 'edf28dbbb85930e14c617ad0eb0479799de050c1'
 
-# Create a custom HTTP client with proxies explicitly disabled
-http_client = httpx.Client(proxies=None)
+# Save original proxy settings and unset them temporarily
+original_http_proxy = os.getenv('HTTP_PROXY')
+original_https_proxy = os.getenv('HTTPS_PROXY')
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
 
-# Initialize the Groq client with the custom HTTP client
-client = Groq(api_key=GROQ_API_KEY, http_client=http_client)
+# Initialize the Groq client
+client = Groq(api_key=GROQ_API_KEY)
+
+# Restore original proxy settings (optional, if needed by other parts of the app)
+if original_http_proxy:
+    os.environ['HTTP_PROXY'] = original_http_proxy
+if original_https_proxy:
+    os.environ['HTTPS_PROXY'] = original_https_proxy
+
+# Rest of your code...
 
 # --- Helper Functions for Database Update ---
 def serper_search(query, api_key, page=1):
