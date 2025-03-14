@@ -420,7 +420,7 @@ def main():
     # Chat Interface
     st.header("Chat with NeuroAI Agent")
     if 'chat_history' not in st.session_state:
-        st.session_state['chat_history'] = [{"role": "assistant", "content": "Here is NeuroAI agent, I can help you find your spinal imaging dataset.\n\nI have datasets in multiple categories: neoplasm, psychiatric, spinal, cerebrovascular, neurodevelopmental, other\nWhich category are you interested in? (For this prototype, please say 'spinal')"}]
+        st.session_state['chat_history'] = [{"role": "assistant", "content": "Here is NeuroAI agent, I can help you find your spinal imaging dataset.\n\nI have datasets in multiple categories: neoplasm, psychiatric, spinal, cerebrovascular, neurodevelopmental, other\nWhich category are you interested in?"}]
     if 'step' not in st.session_state:
         st.session_state['step'] = "category"
     if 'criteria' not in st.session_state:
@@ -507,7 +507,7 @@ def main():
             with st.chat_message("assistant"):
                 st.markdown(response)
             st.session_state['step'] = "category"  # Reset for new session
-            st.session_state['chat_history'] = [{"role": "assistant", "content": "Here is NeuroAI agent, I can help you find your spinal imaging dataset.\n\nI have datasets in multiple categories: neoplasm, psychiatric, spinal, cerebrovascular, neurodevelopmental, other\nWhich category are you interested in? (For this prototype, please say 'spinal')"}]
+            st.session_state['chat_history'] = [{"role": "assistant", "content": "Here is NeuroAI agent, I can help you find your spinal imaging dataset.\n\nI have datasets in multiple categories: neoplasm, psychiatric, spinal, cerebrovascular, neurodevelopmental, other\nWhich category are you interested in?"}]
 
 if __name__ == "__main__":
     main()
