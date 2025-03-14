@@ -485,7 +485,6 @@ def main():
         matches = search_dataset(
             current_df,
             st.session_state.user_inputs['modality'],
-            st.session_state.user_inputs['disease'],
             st.session_state.user_inputs['segmentation'],
             st.session_state.user_inputs['access_type']
         )
