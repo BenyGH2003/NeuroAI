@@ -372,7 +372,6 @@ def search_dataset(df: pd.DataFrame, modality: str, segmentation: str, access_ty
     matches = []
     for idx, row in df.iterrows():
         if (modality.lower() in str(row['modality']).lower() and
-            disease.lower() in str(row['disease']).lower() and
             segmentation.lower() in str(row['segmentation_mask']).lower() and
             access_type.lower() in str(row['access_type']).lower()):
             matches.append({"dataset_name": row['dataset_name'], "url": row['url']})
