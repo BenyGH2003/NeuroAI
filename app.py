@@ -16,7 +16,7 @@ import PyPDF2
 
 # Load environment variables
 load_dotenv()
-GROQ_API_KEY = os.getenv('GROQ_API_KEY', 'your_default_groq_api_key_here')
+GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')
 SERPER_API_KEY = 'edf28dbbb85930e14c617ad0eb0479799de050c1'
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -444,7 +444,7 @@ def main():
                 response = "This prototype only supports 'spinal' category. Please try again.\nWhich category are you interested in? (Please say 'spinal')"
                 st.session_state['step'] = "category"
             else:
-                response = "Great, let's find a spinal imaging dataset for you!\nWhat modality do you want? (e.g., MRI, CT)"
+                response = "Great, let's find Neuroradiology imaging dataset for you!\nWhat modality do you want? (e.g., MRI, CT)"
                 st.session_state['step'] = "modality"
             st.session_state['criteria']['category'] = prompt.lower()
 
@@ -491,7 +491,7 @@ def main():
 
         elif st.session_state['step'] == "repeat":
             if prompt.lower() == 'y':
-                response = "I have datasets in multiple categories: neoplasm, psychiatric, spinal, cerebrovascular, neurodevelopmental, other\nWhich category are you interested in? (For this prototype, please say 'spinal')"
+                response = "I have datasets in multiple categories: neoplasm, psychiatric, spinal, cerebrovascular, neurodevelopmental, other\nWhich category are you interested in?"
                 st.session_state['step'] = "category"
                 st.session_state['criteria'] = {}
             else:
