@@ -368,7 +368,7 @@ def update_dataset(existing_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFr
     return cleaned_df
 
 # AI Agent to search dataset based on user input
-def search_dataset(df: pd.DataFrame, modality: str, disease: str, segmentation: str, access_type: str) -> list:
+def search_dataset(df: pd.DataFrame, modality: str, segmentation: str, access_type: str) -> list:
     matches = []
     for idx, row in df.iterrows():
         if (modality.lower() in str(row['modality']).lower() and
