@@ -389,7 +389,7 @@ def main():
         if update_db:
             with st.spinner("Updating spinal imaging dataset..."):
                 # Load or initialize the dataset
-                dataset_file = 'data/dataset.xlsx'  # Updated path
+                dataset_file = 'dataset.xlsx'  # Updated path
                 sheet_name = 'spinal'
                 
                 if os.path.exists(dataset_file):
@@ -439,7 +439,7 @@ def main():
 
     # Load the current dataset
     try:
-        current_df = pd.read_excel('data/dataset.xlsx', sheet_name='spinal')
+        current_df = pd.read_excel('dataset.xlsx', sheet_name='spinal')
     except:
         st.error("Error loading dataset. Please update the database first.")
         return
