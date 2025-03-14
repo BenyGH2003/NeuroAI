@@ -420,51 +420,94 @@ def main():
     # Chat Interface
     st.header("Chat with NeuroAI Agent")
     if 'chat_history' not in st.session_state:
-        st.session_state['chat_history'] = [{"role": "assistant", "content": "Hello! I can help you find spinal imaging datasets. Please specify your criteria."}]
-    
+        st.session_state['chat_history'] = [{"role": "assistant", "content": "Here is NeuroAI agent, I can help you find your spinal imaging dataset.\n\nI have datasets in multiple categories: neoplasm, psychiatric, spinal, cerebrovascular, neurodevelopmental, other\nWhich category are you interested in? (For this prototype, please say 'spinal')"}]
+    if 'step' not in st.session_state:
+        st.session_state['step'] = "category"
+    if 'criteria' not in st.session_state:
+        st.session_state['criteria'] = {}
+
+    # Display chat history
     for message in st.session_state['chat_history']:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
     # User input
-    prompt = st.chat_input("Enter your request (e.g., modality, disease, etc.):")
+    prompt = st.chat_input("Your response:")
     if prompt:
         st.session_state['chat_history'].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
         
-        # Process the input
-        if "modality" in prompt.lower() or "disease" in prompt.lower():
+        # Process based on current step
+        if st.session_state['step'] == "category":
+            if prompt.lower() != "spinal":
+                response = "This prototype only supports 'spinal' category. Please try again.\nWhich category are you interested in? (Please say 'spinal')"
+                st.session_state['step'] = "category"
+            else:
+                response = "Great, let's find a spinal imaging dataset for you!\nWhat modality do you want? (e.g., MRI, CT)"
+                st.session_state['step'] = "modality"
+            st.session_state['criteria']['category'] = prompt.lower()
+
+        elif st.session_state['step'] == "modality":
+            st.session_state['criteria']['modality'] = prompt
+            response = "What spine disease are you interested in? (e.g., metastatic disease, stenosis)"
+            st.session_state['step'] = "disease"
+
+        elif st.session_state['step'] == "disease":
+            st.session_state['criteria']['disease'] = prompt
+            response = "Do you need segmentation masks? (Yes/No)"
+            st.session_state['step'] = "segmentation"
+
+        elif st.session_state['step'] == "segmentation":
+            st.session_state['criteria']['segmentation'] = prompt
+            response = "What type of access do you prefer? (e.g., open, restricted)"
+            st.session_state['step'] = "access_type"
+
+        elif st.session_state['step'] == "access_type":
+            st.session_state['criteria']['access_type'] = prompt
             with st.spinner("Searching for datasets..."):
-                # Simple parsing for demo purposes
-                modality = "MRI" if "mri" in prompt.lower() else "CT" if "ct" in prompt.lower() else ""
-                disease = "metastatic disease" if "metastatic" in prompt.lower() else "stenosis" if "stenosis" in prompt.lower() else ""
-                segmentation = "Yes" if "segmentation" in prompt.lower() else "No"
-                access_type = "open" if "open" in prompt.lower() else "restricted" if "restricted" in prompt.lower() else ""
-                
-                if not modality or not disease:
-                    response = "Please specify both modality (e.g., MRI, CT) and disease (e.g., metastatic disease, stenosis)."
+                results = search_dataset(
+                    st.session_state['df'],
+                    st.session_state['criteria']['modality'],
+                    st.session_state['criteria']['disease'],
+                    st.session_state['criteria']['segmentation'],
+                    st.session_state['criteria']['access_type']
+                )
+                response = ""
+                if results["matches"]:
+                    response += "**Best Matching Datasets:**\n"
+                    for match in results["matches"]:
+                        response += f"- {match['dataset_name']}  \n  URL: {match['url']}  \n  Relevance: {match['relevance']}\n"
                 else:
-                    results = search_dataset(st.session_state['df'], modality, disease, segmentation, access_type)
-                    response = ""
-                    if results["matches"]:
-                        response += "**Best Matching Datasets:**\n"
-                        for match in results["matches"]:
-                            response += f"- {match['dataset_name']}  \n  URL: {match['url']}  \n  Relevance: {match['relevance']}\n"
-                    else:
-                        response += "No exact matches found.\n"
-                    if results["alternatives"]:
-                        response += "**Alternative Suggestions:**\n"
-                        for alt in results["alternatives"]:
-                            response += f"- {alt['dataset_name']}  \n  URL: {alt['url']}  \n  Note: {alt['explanation']}\n"
-                    if not results["matches"] and not results["alternatives"]:
-                        response += "No datasets found matching your criteria. Try broadening your search parameters."
+                    response += "No exact matches found.\n"
+                if results["alternatives"]:
+                    response += "**Alternative Suggestions:**\n"
+                    for alt in results["alternatives"]:
+                        response += f"- {alt['dataset_name']}  \n  URL: {alt['url']}  \n  Note: {alt['explanation']}\n"
+                if not results["matches"] and not results["alternatives"]:
+                    response += "No datasets found matching your criteria. Try broadening your search parameters."
+                response += "\nWould you like to search again? (y/n)"
+            st.session_state['step'] = "repeat"
+
+        elif st.session_state['step'] == "repeat":
+            if prompt.lower() == 'y':
+                response = "I have datasets in multiple categories: neoplasm, psychiatric, spinal, cerebrovascular, neurodevelopmental, other\nWhich category are you interested in? (For this prototype, please say 'spinal')"
+                st.session_state['step'] = "category"
+                st.session_state['criteria'] = {}
+            else:
+                response = "Goodbye!"
+                st.session_state['step'] = "done"
+
+        if st.session_state['step'] != "done":
+            st.session_state['chat_history'].append({"role": "assistant", "content": response})
+            with st.chat_message("assistant"):
+                st.markdown(response)
         else:
-            response = "Please include specific criteria like modality (e.g., MRI, CT) and disease (e.g., metastatic disease, stenosis) in your request."
-        
-        st.session_state['chat_history'].append({"role": "assistant", "content": response})
-        with st.chat_message("assistant"):
-            st.markdown(response)
+            st.session_state['chat_history'].append({"role": "assistant", "content": response})
+            with st.chat_message("assistant"):
+                st.markdown(response)
+            st.session_state['step'] = "category"  # Reset for new session
+            st.session_state['chat_history'] = [{"role": "assistant", "content": "Here is NeuroAI agent, I can help you find your spinal imaging dataset.\n\nI have datasets in multiple categories: neoplasm, psychiatric, spinal, cerebrovascular, neurodevelopmental, other\nWhich category are you interested in? (For this prototype, please say 'spinal')"}]
 
 if __name__ == "__main__":
     main()
