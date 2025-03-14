@@ -467,27 +467,20 @@ def main():
             st.experimental_rerun()
 
     elif st.session_state.conversation_stage == 2:
-        disease = st.text_input("What spine disease are you interested in? (e.g., metastatic disease, stenosis)", key="disease")
-        if disease:
-            st.session_state.user_inputs['disease'] = disease
+        segmentation = st.text_input("Do you need segmentation masks? (Yes/No)", key="segmentation")
+        if segmentation:
+            st.session_state.user_inputs['segmentation'] = segmentation
             st.session_state.conversation_stage = 3
             st.experimental_rerun()
 
     elif st.session_state.conversation_stage == 3:
-        segmentation = st.text_input("Do you need segmentation masks? (Yes/No)", key="segmentation")
-        if segmentation:
-            st.session_state.user_inputs['segmentation'] = segmentation
+        access_type = st.text_input("What type of access do you prefer? (e.g., open, restricted)", key="access_type")
+        if access_type:
+            st.session_state.user_inputs['access_type'] = access_type
             st.session_state.conversation_stage = 4
             st.experimental_rerun()
 
     elif st.session_state.conversation_stage == 4:
-        access_type = st.text_input("What type of access do you prefer? (e.g., open, restricted)", key="access_type")
-        if access_type:
-            st.session_state.user_inputs['access_type'] = access_type
-            st.session_state.conversation_stage = 5
-            st.experimental_rerun()
-
-    elif st.session_state.conversation_stage == 5:
         # Search and display results
         matches = search_dataset(
             current_df,
