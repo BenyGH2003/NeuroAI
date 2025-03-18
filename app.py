@@ -13,14 +13,17 @@ import regex as re
 import json
 import io
 import PyPDF2
+from tavily import TavilyClient
+from tabulate import tabulate
 
 # Load environment variables
 load_dotenv()
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')
-SERPER_API_KEY = 'edf28dbbb85930e14c617ad0eb0479799de050c1'
+SERPER_API_KEY = os.getenv('SERPER_API_KEY', 'edf28dbbb85930e14c617ad0eb0479799de050c1')
+TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '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')
 client = Groq(api_key=GROQ_API_KEY)
 
-# Define the state structure
+# Define the updated state structure
 class DatasetState(TypedDict):
     paper_text: str
     dataset_name: Optional[str]
@@ -31,55 +34,72 @@ class DatasetState(TypedDict):
     institution: Optional[str]
     country: Optional[str]
     modality: Optional[str]
-    subject: Optional[str]
+    resolution: Optional[str]
+    subject_no_f: Optional[str]
     slice_scan_no: Optional[str]
+    age_range: Optional[str]
+    acquisition_protocol: Optional[str]
     format: Optional[str]
     segmentation_mask: Optional[str]
+    preprocessing: Optional[str]
     disease: Optional[str]
+    healthy_control: Optional[str]
+    staging_information: Optional[str]
+    clinical_data_score: Optional[str]
+    histopathology: Optional[str]
+    lab_data: Optional[str]
 
-# Define the extraction prompt
+# Updated extraction prompt
 EXTRACTION_PROMPT = PromptTemplate(
     input_variables=["text"],
     template="""
-Extract the following information from the provided neuroradiology dataset paper text. 
-Your response should be concise and structured. If information is not found, return 'Not specified'. 
+Extract the following information from the provided neuroradiology dataset paper text.
+Your response should be concise and structured. If information is not found, return 'Not specified'.
 
 Now, extract the following details from the given text:
 
-1. Dataset Name - The official name of the dataset.  
-2. DOI - The Digital Object Identifier (DOI) if available.  
-3. URL - Link to access the dataset (if provided).  
-4. Year of Release - The year the dataset was published.  
-5. Access Type - Whether the dataset is open-access or restricted.  
-6. Institution - The university, research lab, or company that created the dataset.  
-7. Country - The country of the institution.  
-8. Modality - The imaging type (e.g., MRI, CT, X-ray).  
-9. Number of Subjects - The number of people or cases in the dataset.  
-10. Number of Slices/Scans - How many images/scans are available.  
-11. Format - The file format (e.g., DICOM, NIfTI).  
-12. Segmentation Mask - Whether segmentation masks are included (Yes/No).  
-13. Disease - The main disease(s) studied in the dataset.  
+1. Dataset Name - The official name of the dataset.
+2. DOI - The Digital Object Identifier (DOI) if available.
+3. URL - Link to access the dataset (if provided).
+4. Year of Release - The year the dataset was published.
+5. Access Type - Whether the dataset is open-access, restricted, etc.
+6. Institution - The university, research lab, or company that created the dataset.
+7. Country - The country of the institution.
+8. Modality - The imaging type (e.g., MRI, CT, X-ray).
+9. Resolution - The imaging resolution (e.g., voxel size).
+10. Number of Subjects (Female) - The number of total subjects with female subjects in parenthesis e.g 80(30).
+11. Number of Slices/Scans - How many images/scans are available.
+12. Age Range - The age range of subjects.
+13. Acquisition Protocol - Details of how images were acquired.
+14. Format - The file format (e.g., DICOM, NIfTI, MHA, PNG, JPG etc.).
+15. Segmentation Mask - Whether segmentation masks are included (Yes/No) with additional information about if the masks are derived automatically or manual.
+16. Preprocessing - Explain preprocessing steps on the dataset.
+17. Disease - The main disease(s) studied in the dataset.
+18. Healthy Control - Whether healthy controls are included (Yes/No).
+19. Staging Information - Disease staging details if available.
+20. Clinical Data, Score - Whether clinical data or scores are included (if yes, specify what).
+21. Histopathology - Whether histopathology data is included (Yes/No).
+22. Lab Data - Whether lab data (e.g., blood tests) is included (Yes/No).
 
 Text to Analyze:
 {text}
 
-Output Format:  
-- Dataset Name: [answer]  
-- DOI: [answer]  
-- URL: [answer]  
+Output Format:
+- Dataset Name: [answer]
+- DOI: [answer]
+- URL: [answer]
 ...
 
-Final Instructions for AI:  
-- Extract information only from the provided text (do not assume details).  
-- If a field is missing, explain why instead of just saying `"Not specified"`.  
-- Verify that numerical values (year, subject count) are accurate.   
+Final Instructions for AI:
+- Extract information only from the provided text (do not assume details).
+- If a field is missing, explain why instead of just saying `"Not specified"`.
+- Verify that numerical values (year, subject count) are accurate.
 """
 )
 
-# Fetch and clean text from URL or PDF
 def fetch_text_from_url(url):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         if url.lower().endswith(".pdf"):
             response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
@@ -97,7 +117,6 @@ def fetch_text_from_url(url):
     except Exception as e:
         return f"Error fetching text from {url}: {str(e)}"
 
-# Split text into chunks
 def split_text_smart(text, max_tokens=5000):
     sentences = re.split(r'(?<=[.!?])\s+', text)
     chunks = []
@@ -116,7 +135,6 @@ def split_text_smart(text, max_tokens=5000):
         chunks.append(" ".join(current_chunk))
     return chunks
 
-# Extract info using Groq
 def extract_info(state: DatasetState) -> DatasetState:
     prompt = EXTRACTION_PROMPT.format(text=state["paper_text"])
     try:
@@ -132,34 +150,55 @@ def extract_info(state: DatasetState) -> DatasetState:
         result = response.choices[0].message.content
     except Exception as e:
         result = "\n".join([f"{k}: Not specified" for k in DatasetState.__annotations__ if k != "paper_text"])
-    
+
     lines = result.split("\n")
     field_mapping = {
+        "dataset_name": "dataset_name",
+        "doi": "doi",
+        "url": "url",
         "year_of_release": "year",
-        "number_of_subjects": "subject",
-        "number_of_slices/scans": "slice_scan_no"
+        "access_type": "access_type",
+        "institution": "institution",
+        "country": "country",
+        "modality": "modality",
+        "resolution": "resolution",
+        "number_of_subjects_(female)": "subject_no_f",
+        "number_of_slices_scans": "slice_scan_no",
+        "age_range": "age_range",
+        "acquisition_protocol": "acquisition_protocol",
+        "format": "format",
+        "segmentation_mask": "segmentation_mask",
+        "preprocessing": "preprocessing",
+        "disease": "disease",
+        "healthy_control": "healthy_control",
+        "staging_information": "staging_information",
+        "clinical_data,_score": "clinical_data_score",
+        "histopathology": "histopathology",
+        "lab_data": "lab_data"
     }
     for line in lines:
         if ": " in line:
             key, value = line.split(": ", 1)
-            key = key.strip("- ").lower().replace(" ", "_")
+            key = key.strip("- ").lower().replace(" ", "_").replace("/", "_")
             if key in field_mapping:
                 state[field_mapping[key]] = value.strip()
             elif key in DatasetState.__annotations__:
                 state[key] = value.strip()
     return state
 
-# Format output
 def format_output(state: DatasetState) -> DatasetState:
-    fields = ["dataset_name", "doi", "url", "year", "access_type", "institution",
-              "country", "modality", "subject", "slice_scan_no", "format",
-              "segmentation_mask", "disease"]
+    fields = [
+        "dataset_name", "doi", "url", "year", "access_type", "institution", "country",
+        "modality", "resolution", "subject_no_f", "slice_scan_no", "age_range",
+        "acquisition_protocol", "format", "segmentation_mask", "preprocessing", "disease",
+        "healthy_control", "staging_information", "clinical_data_score",
+        "histopathology", "lab_data"
+    ]
     for field in fields:
         if field not in state or state[field] is None:
             state[field] = "Not specified"
     return state
 
-# Build the workflow
 workflow = StateGraph(DatasetState)
 workflow.add_node("extract_info", extract_info)
 workflow.add_node("format_output", format_output)
@@ -168,7 +207,6 @@ workflow.add_edge("format_output", END)
 workflow.set_entry_point("extract_info")
 app = workflow.compile()
 
-# Ensemble results
 def ensemble_results(chunk_results):
     ensembled = {}
     fields = [k for k in DatasetState.__annotations__ if k != "paper_text"]
@@ -182,7 +220,6 @@ def ensemble_results(chunk_results):
             ensembled[field] = "Not specified"
     return ensembled
 
-# Analyze paper
 def analyze_paper(paper_text: str) -> dict:
     chunks = split_text_smart(paper_text, max_tokens=5000)
     chunk_results = []
@@ -192,7 +229,6 @@ def analyze_paper(paper_text: str) -> dict:
         chunk_results.append({k: v for k, v in result.items() if k != "paper_text"})
     return ensemble_results(chunk_results)
 
-# Search using Serper API
 def serper_search(query: str, api_key: str, num_results: int = 10, page: int = 1) -> Optional[pd.DataFrame]:
     url = "https://google.serper.dev/search"
     headers = {'X-API-KEY': api_key, 'Content-Type': 'application/json'}
@@ -208,26 +244,53 @@ def serper_search(query: str, api_key: str, num_results: int = 10, page: int = 1
         ]
         return pd.DataFrame(processed)
     except Exception as e:
-        st.error(f"Search request failed: {str(e)}")
-        return None
+        st.error(f"Serper search failed: {str(e)}")
+        return pd.DataFrame()
 
-# Paginated search
 def paginated_search(query: str, api_key: str, max_pages: int = 3) -> pd.DataFrame:
     all_results = pd.DataFrame()
     page = 1
     num_per_page = 10
     while page <= max_pages:
-        st.write(f"Searching page {page}...")
+        st.write(f"Searching Serper page {page}...")
         results_df = serper_search(query, api_key, num_per_page, page)
         if results_df is None or results_df.empty:
-            st.write("No more results found or error occurred")
+            st.write("No more Serper results found or error occurred")
             break
         all_results = pd.concat([all_results, results_df], ignore_index=True)
         page += 1
         time.sleep(1)
     return all_results
 
-# Process search results
+def get_tavily_results(query: str, api_key: str, max_results: int = 30) -> pd.DataFrame:
+    try:
+        tavily_client = TavilyClient(api_key=api_key)
+        response = tavily_client.search(query, max_results=max_results)
+        results = response['results']
+        df = pd.DataFrame([{'Position': i+1, 'Title': r['title'], 'URL': r['url']} 
+                           for i, r in enumerate(results)])
+        st.write(f"Tavily search returned {len(df)} results")
+        return df
+    except Exception as e:
+        st.error(f"Tavily search failed: {str(e)}")
+        return pd.DataFrame()
+
+def get_combined_results(query: str, serper_api_key: str = None, tavily_api_key: str = None, 
+                        max_pages: int = 3, max_tavily_results: int = 30) -> pd.DataFrame:
+    dfs = []
+    if serper_api_key:
+        serper_df = paginated_search(query, serper_api_key, max_pages=max_pages)
+        dfs.append(serper_df)
+    if tavily_api_key:
+        tavily_df = get_tavily_results(query, tavily_api_key, max_results=max_tavily_results)
+        dfs.append(tavily_df)
+    if dfs:
+        combined_df = pd.concat(dfs).drop_duplicates(subset=['URL']).reset_index(drop=True)
+        st.write(f"Combined unique results from Serper and Tavily: {len(combined_df)} URLs")
+        return combined_df
+    st.write("No results from either Serper or Tavily")
+    return pd.DataFrame()
+
 def process_search_results(search_results: pd.DataFrame, max_urls: int = 5) -> pd.DataFrame:
     urls = search_results['URL'].head(max_urls).tolist()
     texts = []
@@ -236,36 +299,28 @@ def process_search_results(search_results: pd.DataFrame, max_urls: int = 5) -> p
         text = fetch_text_from_url(url)
         texts.append(text)
         time.sleep(2)
-    results = [analyze_paper(text) for text in texts if text and not text.startswith("Error fetching URL")]
+    results = [analyze_paper(text) for text in texts if text and not text.startswith("Error fetching text from")]
     df = pd.DataFrame(results)
-    df['url'] = [url for url, text in zip(urls, texts) if text and not text.startswith("Error fetching URL")]
+    df['url'] = [url for url, text in zip(urls, texts) if text and not text.startswith("Error fetching text from")]
     return df
 
-# Update dataset
 def update_dataset(existing_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFrame:
-    columns = ["dataset_name", "doi", "url", "year", "access_type", "institution",
-               "country", "modality", "subject", "slice_scan_no", "format",
-               "segmentation_mask", "disease"]
+    columns = [
+        "dataset_name", "doi", "url", "year", "access_type", "institution", "country",
+        "modality", "resolution", "subject_no_f", "slice_scan_no", "age_range",
+        "acquisition_protocol", "format", "segmentation_mask", "preprocessing", "disease",
+        "healthy_control", "staging_information", "clinical_data_score",
+        "histopathology", "lab_data"
+    ]
     existing_df = existing_df.reindex(columns=columns, fill_value="Not specified")
     new_df = new_df.reindex(columns=columns, fill_value="Not specified")
 
     def is_duplicate_within(df):
         seen_keys = set()
-        seen_details = []
         duplicates = []
         for idx, row in df.iterrows():
             primary_key = (row['dataset_name'], row['url'], row['doi'])
-            secondary_key = (row['year'], row['modality'], row['slice_scan_no'], row['subject'])
             is_duplicate = any(k in seen_keys for k in primary_key if k != "Not specified")
-            if not is_duplicate:
-                match_count = 0
-                for prev_key in seen_details:
-                    matches = sum(1 for a, b in zip(secondary_key, prev_key) if a == b and a != "Not specified")
-                    if matches >= 3:
-                        is_duplicate = True
-                        break
-                if not is_duplicate:
-                    seen_details.append(secondary_key)
             duplicates.append(is_duplicate)
             if not is_duplicate:
                 seen_keys.update(k for k in primary_key if k != "Not specified")
@@ -273,15 +328,38 @@ def update_dataset(existing_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFr
 
     new_duplicates = is_duplicate_within(new_df)
     new_df_cleaned = new_df[~new_duplicates].reset_index(drop=True)
-    combined_df = pd.concat([existing_df, new_df_cleaned], ignore_index=True)
+    st.write(f"New data after internal deduplication: {len(new_df_cleaned)} rows (from {len(new_df)})")
 
-    all_duplicates = is_duplicate_within(combined_df)
-    cleaned_df = combined_df[~all_duplicates].reset_index(drop=True)
+    combined_df = pd.concat([existing_df, new_df_cleaned], ignore_index=True)
+    st.write(f"Combined dataframe size: {len(combined_df)} rows")
+
+    existing_keys = set()
+    for _, row in existing_df.iterrows():
+        primary_key = (row['dataset_name'], row['url'], row['doi'])
+        existing_keys.update(k for k in primary_key if k != "Not specified")
+
+    def is_duplicate_against_existing(row):
+        primary_key = (row['dataset_name'], row['url'], row['doi'])
+        return any(k in existing_keys for k in primary_key if k != "Not specified")
+
+    combined_duplicates = []
+    for idx, row in combined_df.iterrows():
+        if idx < len(existing_df):
+            combined_duplicates.append(False)
+        else:
+            combined_duplicates.append(is_duplicate_against_existing(row))
+
+    cleaned_df = combined_df[~pd.Series(combined_duplicates)].reset_index(drop=True)
+    st.write(f"Final cleaned dataframe size: {len(cleaned_df)} rows")
     return cleaned_df
 
-# Search dataset
 def search_dataset(df: pd.DataFrame, modality: str, disease: str, segmentation: str, access_type: str) -> dict:
-    relevant_columns = ['dataset_name', 'url', 'modality', 'disease', 'segmentation_mask', 'access_type']
+    relevant_columns = [
+        'dataset_name', 'doi', 'url', 'year', 'access_type', 'institution', 'country',
+        'modality', 'resolution', 'subject_no_f', 'slice_scan_no', 'age_range',
+        'acquisition_protocol', 'format', 'segmentation_mask', 'preprocessing', 'disease',
+        'healthy_control', 'staging_information', 'clinical_data_score', 'histopathology', 'lab_data'
+    ]
     filtered_df = df[relevant_columns].head(20)
     dataset_entries = [
         f"Dataset: {row['dataset_name']} | Modality: {row['modality']} | Disease: {row['disease']} | "
@@ -289,10 +367,10 @@ def search_dataset(df: pd.DataFrame, modality: str, disease: str, segmentation: 
         for _, row in filtered_df.iterrows()
     ]
     dataset_context = "\n".join(dataset_entries)
-    
+
     search_prompt = f"""
     You are a medical imaging dataset expert. Your task is to find datasets matching specific criteria.
-    
+
     USER CRITERIA:
     - Modality: {modality}
     - Disease: {disease}
@@ -333,7 +411,8 @@ def search_dataset(df: pd.DataFrame, modality: str, disease: str, segmentation: 
             max_tokens=1000
         )
         result = response.choices[0].message.content.strip().replace("```json", "").replace("```", "")
-        return json.loads(result)
+        parsed_results = json.loads(result)
+        return parsed_results
     except Exception as e:
         st.error(f"Error querying LLM: {str(e)}")
         return perform_basic_matching(filtered_df, modality, disease, segmentation, access_type)
@@ -342,7 +421,7 @@ def perform_basic_matching(df, modality, disease, segmentation, access_type):
     matches = []
     alternatives = []
     for _, row in df.iterrows():
-        if (modality.lower() in str(row['modality']).lower() and 
+        if (modality.lower() in str(row['modality']).lower() and
             disease.lower() in str(row['disease']).lower() and
             segmentation.lower() in str(row['segmentation_mask']).lower() and
             access_type.lower() in str(row['access_type']).lower()):
@@ -351,7 +430,7 @@ def perform_basic_matching(df, modality, disease, segmentation, access_type):
                 "url": row['url'],
                 "relevance": "Matches all criteria"
             })
-        elif (modality.lower() in str(row['modality']).lower() or 
+        elif (modality.lower() in str(row['modality']).lower() or
               disease.lower() in str(row['disease']).lower()):
             alternatives.append({
                 "dataset_name": row['dataset_name'],
@@ -362,65 +441,73 @@ def perform_basic_matching(df, modality, disease, segmentation, access_type):
 
 # Streamlit App
 def main():
-    st.title("NeuroAI:  Imaging Dataset Finder")
-    
+    st.title("NeuroAI: Neuroradiology Imaging Dataset Finder")
+
     # Sidebar for Update Database
     with st.sidebar:
         st.header("Database Controls")
+        categories = ['Neurodegenerative', 'Neoplasm', 'Cerebrovascular', 'Psychiatric', 'Spinal', 'Neurodevelopmental']
+        selected_category = st.selectbox("Select Category to Update", categories)
         if st.button("Update Database"):
-            with st.spinner("Updating the Database..."):
+            with st.spinner(f"Updating the {selected_category} Database..."):
                 dataset_file = 'dataset.xlsx'
-                sheet_name = 'spinal'
                 if os.path.exists(dataset_file):
-                    existing_df = pd.read_excel(dataset_file, sheet_name=sheet_name)
-                    st.write(f"Loaded {len(existing_df)} rows from existing dataset")
+                    excel_book = pd.read_excel(dataset_file, sheet_name=None)
+                    st.write(f"Loaded existing dataset with sheets: {list(excel_book.keys())}")
+                    existing_df = excel_book.get(selected_category, pd.DataFrame(columns=[
+                        "dataset_name", "doi", "url", "year", "access_type", "institution", "country",
+                        "modality", "resolution", "subject_no_f", "slice_scan_no", "age_range",
+                        "acquisition_protocol", "format", "segmentation_mask", "preprocessing", "disease",
+                        "healthy_control", "staging_information", "clinical_data_score",
+                        "histopathology", "lab_data"
+                    ]))
+                    st.write(f"Loaded {len(existing_df)} rows from {selected_category}")
                 else:
-                    existing_df = pd.DataFrame(columns=[
-                        "dataset_name", "doi", "url", "year", "access_type", "institution",
-                        "country", "modality", "subject", "slice_scan_no", "format",
-                        "segmentation_mask", "disease"
-                    ])
+                    excel_book = {cat: pd.DataFrame(columns=[
+                        "dataset_name", "doi", "url", "year", "access_type", "institution", "country",
+                        "modality", "resolution", "subject_no_f", "slice_scan_no", "age_range",
+                        "acquisition_protocol", "format", "segmentation_mask", "preprocessing", "disease",
+                        "healthy_control", "staging_information", "clinical_data_score",
+                        "histopathology", "lab_data"
+                    ]) for cat in categories}
+                    existing_df = excel_book[selected_category]
                     st.write("No existing dataset found, initializing empty dataframe")
-                
-                SEARCH_QUERY = "spinal imaging dataset"
-                search_results = paginated_search(SEARCH_QUERY, SERPER_API_KEY, max_pages=3)
+
+                SEARCH_QUERY = f"{selected_category.lower()} imaging dataset"
+                search_results = get_combined_results(SEARCH_QUERY, SERPER_API_KEY, TAVILY_API_KEY)
                 if not search_results.empty:
                     new_df = process_search_results(search_results, max_urls=5)
                     st.write(f"Found {len(new_df)} new rows from search")
                     updated_df = update_dataset(existing_df, new_df)
-                    
-                    if os.path.exists(dataset_file):
-                        excel_book = pd.read_excel(dataset_file, sheet_name=None)
-                        excel_book[sheet_name] = updated_df
-                        with pd.ExcelWriter(dataset_file, engine='openpyxl', mode='w') as writer:
-                            for sheet, df in excel_book.items():
-                                df.to_excel(writer, sheet_name=sheet, index=False)
-                    else:
-                        with pd.ExcelWriter(dataset_file, engine='openpyxl', mode='w') as writer:
-                            updated_df.to_excel(writer, sheet_name=sheet_name, index=False)
-                    st.success(f"Dataset updated and saved to {dataset_file}, sheet: {sheet_name}")
-                    st.session_state['df'] = updated_df
+                    excel_book[selected_category] = updated_df
+                    with pd.ExcelWriter(dataset_file, engine='openpyxl', mode='w') as writer:
+                        for sheet, df in excel_book.items():
+                            df.to_excel(writer, sheet_name=sheet, index=False)
+                    st.success(f"Dataset updated and saved to {dataset_file}, sheet: {selected_category}")
+                    st.session_state['excel_book'] = excel_book
                 else:
-                    st.warning("No new datasets found, using existing dataset.")
-                    st.session_state['df'] = existing_df
-    
+                    st.warning(f"No new datasets found for {selected_category}, using existing dataset.")
+                    st.session_state['excel_book'] = excel_book
+
     # Load dataset
     dataset_file = 'dataset.xlsx'
-    sheet_name = 'spinal'
-    if 'df' not in st.session_state:
+    categories = ['Neurodegenerative', 'Neoplasm', 'Cerebrovascular', 'Psychiatric', 'Spinal', 'Neurodevelopmental']
+    if 'excel_book' not in st.session_state:
         if os.path.exists(dataset_file):
-            st.session_state['df'] = pd.read_excel(dataset_file, sheet_name=sheet_name)
+            st.session_state['excel_book'] = pd.read_excel(dataset_file, sheet_name=None)
         else:
-            st.session_state['df'] = pd.DataFrame(columns=[
-                "dataset_name", "doi", "url", "year", "access_type", "institution",
-                "country", "modality", "subject", "slice_scan_no", "format",
-                "segmentation_mask", "disease"
-            ])
+            st.session_state['excel_book'] = {cat: pd.DataFrame(columns=[
+                "dataset_name", "doi", "url", "year", "access_type", "institution", "country",
+                "modality", "resolution", "subject_no_f", "slice_scan_no", "age_range",
+                "acquisition_protocol", "format", "segmentation_mask", "preprocessing", "disease",
+                "healthy_control", "staging_information", "clinical_data_score",
+                "histopathology", "lab_data"
+            ]) for cat in categories}
 
     # Chat Interface
     st.header("Chat with NeuroAI Agent")
     if 'chat_history' not in st.session_state:
-        st.session_state['chat_history'] = [{"role": "assistant", "content": "Here is NeuroAI agent, I can help you find your Neuroradiology imaging dataset.\n\nI have datasets in multiple categories: neoplasm, psychiatric, spinal, cerebrovascular, neurodevelopmental, other\nWhich category are you interested in?"}]
+        st.session_state['chat_history'] = [{"role": "assistant", "content": f"Here is NeuroAI agent, I can help you find your neuroradiology imaging dataset.\n\nI have datasets in multiple categories: {', '.join(categories)}\nWhich category are you interested in?"}]
     if 'step' not in st.session_state:
         st.session_state['step'] = "category"
     if 'criteria' not in st.session_state:
@@ -430,27 +517,27 @@ def main():
     for message in st.session_state['chat_history']:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-    
+
     # User input
     prompt = st.chat_input("Your response:")
     if prompt:
         st.session_state['chat_history'].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
-        
+
         # Process based on current step
         if st.session_state['step'] == "category":
-            if prompt.lower() != "spinal":
-                response = "This prototype only supports 'spinal' category. Please try again.\nWhich category are you interested in? (Please say 'spinal')"
+            if prompt.capitalize() not in categories:
+                response = f"Invalid category. Please choose from: {', '.join(categories)}\nWhich category are you interested in?"
                 st.session_state['step'] = "category"
             else:
-                response = "Great, let's find Neuroradiology imaging dataset for you!\nWhat modality do you want? (e.g., MRI, CT)"
+                response = f"Great, let's find a {prompt.capitalize()} imaging dataset for you!\nWhat modality do you want? (e.g., MRI, CT)"
                 st.session_state['step'] = "modality"
-            st.session_state['criteria']['category'] = prompt.lower()
+            st.session_state['criteria']['category'] = prompt.capitalize()
 
         elif st.session_state['step'] == "modality":
             st.session_state['criteria']['modality'] = prompt
-            response = "What spine disease are you interested in? (e.g., metastatic disease, stenosis)"
+            response = f"What {st.session_state['criteria']['category'].lower()} disease are you interested in?"
             st.session_state['step'] = "disease"
 
         elif st.session_state['step'] == "disease":
@@ -466,8 +553,9 @@ def main():
         elif st.session_state['step'] == "access_type":
             st.session_state['criteria']['access_type'] = prompt
             with st.spinner("Searching for datasets..."):
+                df = st.session_state['excel_book'][st.session_state['criteria']['category']]
                 results = search_dataset(
-                    st.session_state['df'],
+                    df,
                     st.session_state['criteria']['modality'],
                     st.session_state['criteria']['disease'],
                     st.session_state['criteria']['segmentation'],
@@ -475,23 +563,37 @@ def main():
                 )
                 response = ""
                 if results["matches"]:
-                    response += "**Best Matching Datasets:**\n"
-                    for match in results["matches"]:
-                        response += f"- {match['dataset_name']}  \n  URL: {match['url']}  \n  Relevance: {match['relevance']}\n"
+                    response += "**Best Matching Datasets:**\n\n"
+                    match_names = [match["dataset_name"] for match in results["matches"]]
+                    matches_df = df[df['dataset_name'].isin(match_names)][[
+                        'dataset_name', 'doi', 'url', 'year', 'access_type', 'modality', 'disease', 'segmentation_mask'
+                    ]].rename(columns={
+                        'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
+                        'access_type': 'Access', 'modality': 'Modality', 'disease': 'Disease',
+                        'segmentation_mask': 'Segmentation'
+                    })
+                    response += f"```\n{tabulate(matches_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```\n"
                 else:
                     response += "No exact matches found.\n"
                 if results["alternatives"]:
-                    response += "**Alternative Suggestions:**\n"
-                    for alt in results["alternatives"]:
-                        response += f"- {alt['dataset_name']}  \n  URL: {alt['url']}  \n  Note: {alt['explanation']}\n"
+                    response += "**Alternative Suggestions:**\n\n"
+                    alt_names = [alt["dataset_name"] for alt in results["alternatives"]]
+                    alternatives_df = df[df['dataset_name'].isin(alt_names)][[
+                        'dataset_name', 'doi', 'url', 'year', 'access_type', 'modality', 'disease', 'segmentation_mask'
+                    ]].rename(columns={
+                        'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
+                        'access_type': 'Access', 'modality': 'Modality', 'disease': 'Disease',
+                        'segmentation_mask': 'Segmentation'
+                    })
+                    response += f"```\n{tabulate(alternatives_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```\n"
                 if not results["matches"] and not results["alternatives"]:
-                    response += "No datasets found matching your criteria. Try broadening your search parameters."
+                    response += "No datasets found matching your criteria. Try broadening your search parameters.\n"
                 response += "\nWould you like to search again? (y/n)"
             st.session_state['step'] = "repeat"
 
         elif st.session_state['step'] == "repeat":
             if prompt.lower() == 'y':
-                response = "I have datasets in multiple categories: neoplasm, psychiatric, spinal, cerebrovascular, neurodevelopmental, other\nWhich category are you interested in?"
+                response = f"I have datasets in multiple categories: {', '.join(categories)}\nWhich category are you interested in?"
                 st.session_state['step'] = "category"
                 st.session_state['criteria'] = {}
             else:
@@ -506,8 +608,8 @@ def main():
             st.session_state['chat_history'].append({"role": "assistant", "content": response})
             with st.chat_message("assistant"):
                 st.markdown(response)
-            st.session_state['step'] = "category"  # Reset for new session
-            st.session_state['chat_history'] = [{"role": "assistant", "content": "Here is NeuroAI agent, I can help you find your spinal imaging dataset.\n\nI have datasets in multiple categories: neoplasm, psychiatric, spinal, cerebrovascular, neurodevelopmental, other\nWhich category are you interested in?"}]
+            st.session_state['step'] = "category"
+            st.session_state['chat_history'] = [{"role": "assistant", "content": f"Here is NeuroAI agent, I can help you find your neuroradiology imaging dataset.\n\nI have datasets in multiple categories: {', '.join(categories)}\nWhich category are you interested in?"}]
 
 if __name__ == "__main__":
     main()
