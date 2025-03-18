@@ -20,7 +20,7 @@ from tabulate import tabulate
 load_dotenv()
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')
 SERPER_API_KEY = os.getenv('SERPER_API_KEY', 'edf28dbbb85930e14c617ad0eb0479799de050c1')
-TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', 'your_tavily_api_key')  # Replace with your Tavily API key
+TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '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')
 client = Groq(api_key=GROQ_API_KEY)
 
 # Define the updated state structure
