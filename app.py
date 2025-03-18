@@ -20,7 +20,7 @@ from tabulate import tabulate
 load_dotenv()
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')
 SERPER_API_KEY = os.getenv('SERPER_API_KEY', 'edf28dbbb85930e14c617ad0eb0479799de050c1')
-TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', 'your_tavily_api_key')  # Replace with your Tavily API key
+TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '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')
 client = Groq(api_key=GROQ_API_KEY)
 
 # Define the updated state structure
@@ -566,11 +566,18 @@ def main():
                     response += "**Best Matching Datasets:**\n\n"
                     match_names = [match["dataset_name"] for match in results["matches"]]
                     matches_df = df[df['dataset_name'].isin(match_names)][[
-                        'dataset_name', 'doi', 'url', 'year', 'access_type', 'modality', 'disease', 'segmentation_mask'
+                        'dataset_name', 'doi', 'url', 'year', 'access_type', 'institution', 'country',
+                        'modality', 'resolution', 'subject_no_f', 'slice_scan_no', 'age_range',
+                        'acquisition_protocol', 'format', 'segmentation_mask', 'preprocessing', 'disease',
+                        'healthy_control', 'staging_information', 'clinical_data_score', 'histopathology', 'lab_data'
                     ]].rename(columns={
                         'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
-                        'access_type': 'Access', 'modality': 'Modality', 'disease': 'Disease',
-                        'segmentation_mask': 'Segmentation'
+                        'access_type': 'Access', 'institution': 'Institution', 'country': 'Country',
+                        'modality': 'Modality', 'resolution': 'Resolution', 'subject_no_f': 'Subjects (F)',
+                        'slice_scan_no': 'Slices/Scans', 'age_range': 'Age Range', 'acquisition_protocol': 'Protocol',
+                        'format': 'Format', 'segmentation_mask': 'Segmentation', 'preprocessing': 'Preprocessing',
+                        'disease': 'Disease', 'healthy_control': 'Healthy?', 'staging_information': 'Staging',
+                        'clinical_data_score': 'Clinical Data', 'histopathology': 'Histopath?', 'lab_data': 'Lab Data?'
                     })
                     response += f"```\n{tabulate(matches_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```\n"
                 else:
@@ -579,11 +586,18 @@ def main():
                     response += "**Alternative Suggestions:**\n\n"
                     alt_names = [alt["dataset_name"] for alt in results["alternatives"]]
                     alternatives_df = df[df['dataset_name'].isin(alt_names)][[
-                        'dataset_name', 'doi', 'url', 'year', 'access_type', 'modality', 'disease', 'segmentation_mask'
+                        'dataset_name', 'doi', 'url', 'year', 'access_type', 'institution', 'country',
+                        'modality', 'resolution', 'subject_no_f', 'slice_scan_no', 'age_range',
+                        'acquisition_protocol', 'format', 'segmentation_mask', 'preprocessing', 'disease',
+                        'healthy_control', 'staging_information', 'clinical_data_score', 'histopathology', 'lab_data'
                     ]].rename(columns={
                         'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
-                        'access_type': 'Access', 'modality': 'Modality', 'disease': 'Disease',
-                        'segmentation_mask': 'Segmentation'
+                        'access_type': 'Access', 'institution': 'Institution', 'country': 'Country',
+                        'modality': 'Modality', 'resolution': 'Resolution', 'subject_no_f': 'Subjects (F)',
+                        'slice_scan_no': 'Slices/Scans', 'age_range': 'Age Range', 'acquisition_protocol': 'Protocol',
+                        'format': 'Format', 'segmentation_mask': 'Segmentation', 'preprocessing': 'Preprocessing',
+                        'disease': 'Disease', 'healthy_control': 'Healthy?', 'staging_information': 'Staging',
+                        'clinical_data_score': 'Clinical Data', 'histopathology': 'Histopath?', 'lab_data': 'Lab Data?'
                     })
                     response += f"```\n{tabulate(alternatives_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```\n"
                 if not results["matches"] and not results["alternatives"]:
