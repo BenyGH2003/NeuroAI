@@ -291,7 +291,7 @@ def get_combined_results(query: str, serper_api_key: str = None, tavily_api_key:
     st.write("No results from either Serper or Tavily")
     return pd.DataFrame()
 
-def process_search_results(search_results: pd.DataFrame, max_urls: int = 5) -> pd.DataFrame:
+def process_search_results(search_results: pd.DataFrame, max_urls: int = 30) -> pd.DataFrame:
     urls = search_results['URL'].head(max_urls).tolist()
     texts = []
     for idx, url in enumerate(urls):
@@ -471,7 +471,7 @@ def main():
                     SEARCH_QUERY = f"{category.lower()} imaging dataset"
                     search_results = get_combined_results(SEARCH_QUERY, SERPER_API_KEY, TAVILY_API_KEY)
                     if not search_results.empty:
-                        new_df = process_search_results(search_results, max_urls=5)
+                        new_df = process_search_results(search_results, max_urls=30)
                         st.write(f"Found {len(new_df)} new rows from search for {category}")
                         updated_df = update_dataset(existing_df, new_df)
                         excel_book[category] = updated_df
