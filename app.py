@@ -466,7 +466,7 @@ def main():
 
                 for category in selected_categories:
                     st.write(f"\nUpdating {category} dataset...")
-                    existing_df = excel_book.get(category, pd.DataFrame(columns=excel_book.get('Spinal', excel_book[categories[0]]).columns))
+                    existing_df = excel_book.get(category, pd.DataFrame(columns=excel_book.get(category, excel_book[categories[0]]).columns))
                     st.write(f"Loaded {len(existing_df)} rows from {category}")
                     SEARCH_QUERY = f"{category.lower()} imaging dataset"
                     search_results = get_combined_results(SEARCH_QUERY, SERPER_API_KEY, TAVILY_API_KEY)
