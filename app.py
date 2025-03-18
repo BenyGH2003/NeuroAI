@@ -20,7 +20,7 @@ from tabulate import tabulate
 load_dotenv()
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')
 SERPER_API_KEY = os.getenv('SERPER_API_KEY', 'edf28dbbb85930e14c617ad0eb0479799de050c1')
-TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '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')
+TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', 'your_tavily_api_key')  # Replace with your Tavily API key
 client = Groq(api_key=GROQ_API_KEY)
 
 # Define the updated state structure
@@ -447,21 +447,13 @@ def main():
     with st.sidebar:
         st.header("Database Controls")
         categories = ['Neurodegenerative', 'Neoplasm', 'Cerebrovascular', 'Psychiatric', 'Spinal', 'Neurodevelopmental']
-        selected_category = st.selectbox("Select Category to Update", categories)
-        if st.button("Update Database"):
-            with st.spinner(f"Updating the {selected_category} Database..."):
+        selected_categories = st.multiselect("Select Categories to Update", categories, default=categories)
+        if st.button("Update Selected Datasets"):
+            with st.spinner(f"Updating {', '.join(selected_categories)} Databases..."):
                 dataset_file = 'dataset.xlsx'
                 if os.path.exists(dataset_file):
                     excel_book = pd.read_excel(dataset_file, sheet_name=None)
                     st.write(f"Loaded existing dataset with sheets: {list(excel_book.keys())}")
-                    existing_df = excel_book.get(selected_category, pd.DataFrame(columns=[
-                        "dataset_name", "doi", "url", "year", "access_type", "institution", "country",
-                        "modality", "resolution", "subject_no_f", "slice_scan_no", "age_range",
-                        "acquisition_protocol", "format", "segmentation_mask", "preprocessing", "disease",
-                        "healthy_control", "staging_information", "clinical_data_score",
-                        "histopathology", "lab_data"
-                    ]))
-                    st.write(f"Loaded {len(existing_df)} rows from {selected_category}")
                 else:
                     excel_book = {cat: pd.DataFrame(columns=[
                         "dataset_name", "doi", "url", "year", "access_type", "institution", "country",
@@ -470,24 +462,28 @@ def main():
                         "healthy_control", "staging_information", "clinical_data_score",
                         "histopathology", "lab_data"
                     ]) for cat in categories}
-                    existing_df = excel_book[selected_category]
                     st.write("No existing dataset found, initializing empty dataframe")
 
-                SEARCH_QUERY = f"{selected_category.lower()} imaging dataset"
-                search_results = get_combined_results(SEARCH_QUERY, SERPER_API_KEY, TAVILY_API_KEY)
-                if not search_results.empty:
-                    new_df = process_search_results(search_results, max_urls=5)
-                    st.write(f"Found {len(new_df)} new rows from search")
-                    updated_df = update_dataset(existing_df, new_df)
-                    excel_book[selected_category] = updated_df
-                    with pd.ExcelWriter(dataset_file, engine='openpyxl', mode='w') as writer:
-                        for sheet, df in excel_book.items():
-                            df.to_excel(writer, sheet_name=sheet, index=False)
-                    st.success(f"Dataset updated and saved to {dataset_file}, sheet: {selected_category}")
-                    st.session_state['excel_book'] = excel_book
-                else:
-                    st.warning(f"No new datasets found for {selected_category}, using existing dataset.")
-                    st.session_state['excel_book'] = excel_book
+                for category in selected_categories:
+                    st.write(f"\nUpdating {category} dataset...")
+                    existing_df = excel_book.get(category, pd.DataFrame(columns=excel_book.get('Spinal', excel_book[categories[0]]).columns))
+                    st.write(f"Loaded {len(existing_df)} rows from {category}")
+                    SEARCH_QUERY = f"{category.lower()} imaging dataset"
+                    search_results = get_combined_results(SEARCH_QUERY, SERPER_API_KEY, TAVILY_API_KEY)
+                    if not search_results.empty:
+                        new_df = process_search_results(search_results, max_urls=5)
+                        st.write(f"Found {len(new_df)} new rows from search for {category}")
+                        updated_df = update_dataset(existing_df, new_df)
+                        excel_book[category] = updated_df
+                    else:
+                        st.write(f"No new datasets found for {category}, using existing dataset.")
+                        excel_book[category] = existing_df
+
+                with pd.ExcelWriter(dataset_file, engine='openpyxl', mode='w') as writer:
+                    for sheet, df in excel_book.items():
+                        df.to_excel(writer, sheet_name=sheet, index=False)
+                st.success(f"Updated datasets saved to {dataset_file} for categories: {', '.join(selected_categories)}")
+                st.session_state['excel_book'] = excel_book
 
     # Load dataset
     dataset_file = 'dataset.xlsx'
@@ -566,11 +562,18 @@ def main():
                     response += "**Best Matching Datasets:**\n\n"
                     match_names = [match["dataset_name"] for match in results["matches"]]
                     matches_df = df[df['dataset_name'].isin(match_names)][[
-                        'dataset_name', 'doi', 'url', 'year', 'access_type', 'modality', 'disease', 'segmentation_mask'
+                        'dataset_name', 'doi', 'url', 'year', 'access_type', 'institution', 'country',
+                        'modality', 'resolution', 'subject_no_f', 'slice_scan_no', 'age_range',
+                        'acquisition_protocol', 'format', 'segmentation_mask', 'preprocessing', 'disease',
+                        'healthy_control', 'staging_information', 'clinical_data_score', 'histopathology', 'lab_data'
                     ]].rename(columns={
                         'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
-                        'access_type': 'Access', 'modality': 'Modality', 'disease': 'Disease',
-                        'segmentation_mask': 'Segmentation'
+                        'access_type': 'Access', 'institution': 'Institution', 'country': 'Country',
+                        'modality': 'Modality', 'resolution': 'Resolution', 'subject_no_f': 'Subjects (F)',
+                        'slice_scan_no': 'Slices/Scans', 'age_range': 'Age Range', 'acquisition_protocol': 'Protocol',
+                        'format': 'Format', 'segmentation_mask': 'Segmentation', 'preprocessing': 'Preprocessing',
+                        'disease': 'Disease', 'healthy_control': 'Healthy?', 'staging_information': 'Staging',
+                        'clinical_data_score': 'Clinical Data', 'histopathology': 'Histopath?', 'lab_data': 'Lab Data?'
                     })
                     response += f"```\n{tabulate(matches_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```\n"
                 else:
@@ -579,11 +582,18 @@ def main():
                     response += "**Alternative Suggestions:**\n\n"
                     alt_names = [alt["dataset_name"] for alt in results["alternatives"]]
                     alternatives_df = df[df['dataset_name'].isin(alt_names)][[
-                        'dataset_name', 'doi', 'url', 'year', 'access_type', 'modality', 'disease', 'segmentation_mask'
+                        'dataset_name', 'doi', 'url', 'year', 'access_type', 'institution', 'country',
+                        'modality', 'resolution', 'subject_no_f', 'slice_scan_no', 'age_range',
+                        'acquisition_protocol', 'format', 'segmentation_mask', 'preprocessing', 'disease',
+                        'healthy_control', 'staging_information', 'clinical_data_score', 'histopathology', 'lab_data'
                     ]].rename(columns={
                         'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
-                        'access_type': 'Access', 'modality': 'Modality', 'disease': 'Disease',
-                        'segmentation_mask': 'Segmentation'
+                        'access_type': 'Access', 'institution': 'Institution', 'country': 'Country',
+                        'modality': 'Modality', 'resolution': 'Resolution', 'subject_no_f': 'Subjects (F)',
+                        'slice_scan_no': 'Slices/Scans', 'age_range': 'Age Range', 'acquisition_protocol': 'Protocol',
+                        'format': 'Format', 'segmentation_mask': 'Segmentation', 'preprocessing': 'Preprocessing',
+                        'disease': 'Disease', 'healthy_control': 'Healthy?', 'staging_information': 'Staging',
+                        'clinical_data_score': 'Clinical Data', 'histopathology': 'Histopath?', 'lab_data': 'Lab Data?'
                     })
                     response += f"```\n{tabulate(alternatives_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```\n"
                 if not results["matches"] and not results["alternatives"]:
