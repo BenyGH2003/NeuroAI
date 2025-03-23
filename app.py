@@ -434,10 +434,27 @@ def perform_basic_matching(df, modality, disease, segmentation, access_type):
               disease.lower() in str(row['disease']).lower()):
             alternatives.append({
                 "dataset_name": row['dataset_name'],
-                "url": row['url'],
+                "url": "exact url from list",
                 "explanation": "Partial match on modality or disease"
             })
     return {"matches": matches, "alternatives": alternatives}
+
+def display_all_datasets(excel_book, categories):
+    """Helper function to display all datasets across categories in tabs."""
+    tabs = st.tabs(categories)
+    for tab, category in zip(tabs, categories):
+        with tab:
+            df = excel_book[category].rename(columns={
+                'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
+                'access_type': 'Access', 'institution': 'Institution', 'country': 'Country',
+                'modality': 'Modality', 'resolution': 'Resolution', 'subject_no_f': 'Subjects (F)',
+                'slice_scan_no': 'Slices/Scans', 'age_range': 'Age Range', 'acquisition_protocol': 'Protocol',
+                'format': 'Format', 'segmentation_mask': 'Segmentation', 'preprocessing': 'Preprocessing',
+                'disease': 'Disease', 'healthy_control': 'Healthy?', 'staging_information': 'Staging',
+                'clinical_data_score': 'Clinical Data', 'histopathology': 'Histopath?', 'lab_data': 'Lab Data?'
+            })
+            st.write(f"**All Datasets in {category}**")
+            st.dataframe(df, use_container_width=True)
 
 # Streamlit App
 def main():
@@ -507,7 +524,7 @@ def main():
     # Chat Interface
     st.header("Chat with NeuroAI Agent")
     if 'chat_history' not in st.session_state:
-        st.session_state['chat_history'] = [{"role": "assistant", "content": f"Here is NeuroAI agent, I can help you find your neuroradiology imaging dataset.\n\nI have datasets in multiple categories: {', '.join(categories)}\nWhich category are you interested in?"}]
+        st.session_state['chat_history'] = [{"role": "assistant", "content": f"Here is NeuroAI agent, I can help you find your neuroradiology imaging dataset.\n\nI have datasets in multiple categories: {', '.join(categories)}\nWhich category are you interested in? (or type 'all' for all datasets)"}]
     if 'step' not in st.session_state:
         st.session_state['step'] = "category"
     if 'criteria' not in st.session_state:
@@ -527,13 +544,45 @@ def main():
 
         # Process based on current step
         if st.session_state['step'] == "category":
-            if prompt.capitalize() not in categories:
-                response = f"Invalid category. Please choose from: {', '.join(categories)}\nWhich category are you interested in?"
+            prompt_lower = prompt.lower()
+            all_keywords = ['all', 'none', 'neither', 'i want all datasets']
+            if prompt_lower in all_keywords:
+                response = "Displaying all datasets across all categories below:"
+                st.session_state['chat_history'].append({"role": "assistant", "content": response})
+                with st.chat_message("assistant"):
+                    st.markdown(response)
+                    display_all_datasets(st.session_state['excel_book'], categories)
+                response = "\nWould you like to search again? (y/n)"
+                st.session_state['step'] = "repeat"
+            elif prompt.capitalize() not in categories:
+                response = f"Invalid category. Please choose from: {', '.join(categories)} or type 'all' for all datasets.\nWhich category are you interested in?"
                 st.session_state['step'] = "category"
             else:
-                response = f"Great, let's find a {prompt.capitalize()} imaging dataset for you!\nWhat modality do you want? (e.g., MRI, CT)"
+                response = f"Great, you've selected {prompt.capitalize()}!\nDo you want a specific subset of datasets or all datasets in this category? (subset/all)"
+                st.session_state['step'] = "subset_or_all"
+                st.session_state['criteria']['category'] = prompt.capitalize()
+
+        elif st.session_state['step'] == "subset_or_all":
+            if prompt.lower() == "all":
+                response = f"Here are all datasets in {st.session_state['criteria']['category']}:\n\n"
+                df = st.session_state['excel_book'][st.session_state['criteria']['category']].rename(columns={
+                    'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
+                    'access_type': 'Access', 'institution': 'Institution', 'country': 'Country',
+                    'modality': 'Modality', 'resolution': 'Resolution', 'subject_no_f': 'Subjects (F)',
+                    'slice_scan_no': 'Slices/Scans', 'age_range': 'Age Range', 'acquisition_protocol': 'Protocol',
+                    'format': 'Format', 'segmentation_mask': 'Segmentation', 'preprocessing': 'Preprocessing',
+                    'disease': 'Disease', 'healthy_control': 'Healthy?', 'staging_information': 'Staging',
+                    'clinical_data_score': 'Clinical Data', 'histopathology': 'Histopath?', 'lab_data': 'Lab Data?'
+                })
+                response += f"```\n{tabulate(df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```"
+                response += "\nWould you like to search again? (y/n)"
+                st.session_state['step'] = "repeat"
+            elif prompt.lower() == "subset":
+                response = f"What modality do you want for {st.session_state['criteria']['category']} datasets? (e.g., MRI, CT)"
                 st.session_state['step'] = "modality"
-            st.session_state['criteria']['category'] = prompt.capitalize()
+            else:
+                response = "Please respond with 'subset' or 'all'.\nDo you want a specific subset of datasets or all datasets in this category?"
+                st.session_state['step'] = "subset_or_all"
 
         elif st.session_state['step'] == "modality":
             st.session_state['criteria']['modality'] = prompt
@@ -602,12 +651,26 @@ def main():
                     response += f"```\n{tabulate(alternatives_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```\n"
                 if not results["matches"] and not results["alternatives"]:
                     response += "No datasets found matching your criteria. Try broadening your search parameters.\n"
+                
+                # Display all datasets in the category
+                response += f"\n**All Datasets in {st.session_state['criteria']['category']}**\n\n"
+                all_df = df.rename(columns={
+                    'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
+                    'access_type': 'Access', 'institution': 'Institution', 'country': 'Country',
+                    'modality': 'Modality', 'resolution': 'Resolution', 'subject_no_f': 'Subjects (F)',
+                    'slice_scan_no': 'Slices/Scans', 'age_range': 'Age Range', 'acquisition_protocol': 'Protocol',
+                    'format': 'Format', 'segmentation_mask': 'Segmentation', 'preprocessing': 'Preprocessing',
+                    'disease': 'Disease', 'healthy_control': 'Healthy?', 'staging_information': 'Staging',
+                    'clinical_data_score': 'Clinical Data', 'histopathology': 'Histopath?', 'lab_data': 'Lab Data?'
+                })
+                response += f"```\n{tabulate(all_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```"
+                
                 response += "\nWould you like to search again? (y/n)"
             st.session_state['step'] = "repeat"
 
         elif st.session_state['step'] == "repeat":
             if prompt.lower() == 'y':
-                response = f"I have datasets in multiple categories: {', '.join(categories)}\nWhich category are you interested in?"
+                response = f"I have datasets in multiple categories: {', '.join(categories)}\nWhich category are you interested in? (or type 'all' for all datasets)"
                 st.session_state['step'] = "category"
                 st.session_state['criteria'] = {}
             else:
@@ -623,7 +686,7 @@ def main():
             with st.chat_message("assistant"):
                 st.markdown(response)
             st.session_state['step'] = "category"
-            st.session_state['chat_history'] = [{"role": "assistant", "content": f"Here is NeuroAI agent, I can help you find your neuroradiology imaging dataset.\n\nI have datasets in multiple categories: {', '.join(categories)}\nWhich category are you interested in?"}]
+            st.session_state['chat_history'] = [{"role": "assistant", "content": f"Here is NeuroAI agent, I can help you find your neuroradiology imaging dataset.\n\nI have datasets in multiple categories: {', '.join(categories)}\nWhich category are you interested in? (or type 'all' for all datasets)"}]
 
 if __name__ == "__main__":
     main()
