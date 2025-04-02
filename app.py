@@ -23,7 +23,7 @@ SERPER_API_KEY = os.getenv('SERPER_API_KEY', 'edf28dbbb85930e14c617ad0eb0479799d
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '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')
 client = Groq(api_key=GROQ_API_KEY)
 
-# Define the updated state structure
+# Define the state structure
 class DatasetState(TypedDict):
     paper_text: str
     dataset_name: Optional[str]
@@ -49,7 +49,7 @@ class DatasetState(TypedDict):
     histopathology: Optional[str]
     lab_data: Optional[str]
 
-# Updated extraction prompt
+# Updated extraction prompt (unchanged from previous)
 EXTRACTION_PROMPT = PromptTemplate(
     input_variables=["text"],
     template="""
@@ -96,6 +96,51 @@ Final Instructions for AI:
 - Verify that numerical values (year, subject count) are accurate.
 """
 )
+
+# Define search queries from the previous code
+search_queries = {
+    "Neurodegenerative": [
+        "neurodegenerative imaging dataset",
+        "Alzheimer imaging dataset",
+        "Multiple Sclerosis imaging dataset",
+        "Parkinson imaging dataset"
+    ],
+    "Neoplasm": [
+        "Glioma imaging dataset",
+        "Glioblastoma imaging dataset",
+        "Astrocytoma imaging dataset"
+    ],
+    "Cerebrovascular": [
+        "Cerebrovascular imaging dataset",
+        "Stroke imaging dataset",
+        "Brain aneurysm dataset",
+        "Cerebral angiography dataset"
+    ],
+    "Psychiatric": [
+        "Psychiatric disease imaging datasets",
+        "ADHD imaging datasets",
+        "MDD imaging datasets",
+        "Bipolar disease imaging datasets",
+        "Schizophrenia imaging datasets"
+    ],
+    "Spinal": [
+        "Spine MRI dataset",
+        "Spine CT scan dataset",
+        "Spine X-ray dataset",
+        "Degenerative spine disease imaging dataset",
+        "Spinal tumor imaging dataset",
+        "Herniated disc imaging dataset",
+        "Scoliosis imaging dataset",
+        "Spinal fracture imaging dataset"
+    ],
+    "Neurodevelopmental": [
+        "Neurodevelopmental MRI dataset",
+        "Autism spectrum disorder MRI",
+        "ADHD neuroimaging",
+        "Pediatric neuroimaging dataset",
+        "Developmental brain imaging"
+    ]
+}
 
 def fetch_text_from_url(url):
     try:
@@ -434,7 +479,7 @@ def perform_basic_matching(df, modality, disease, segmentation, access_type):
               disease.lower() in str(row['disease']).lower()):
             alternatives.append({
                 "dataset_name": row['dataset_name'],
-                "url": "exact url from list",
+                "url": row['url'],
                 "explanation": "Partial match on modality or disease"
             })
     return {"matches": matches, "alternatives": alternatives}
@@ -490,8 +535,18 @@ def main():
                     existing_df = excel_book[selected_category]
                     st.write("No existing dataset found, initializing empty dataframe")
 
-                SEARCH_QUERY = f"{selected_category.lower()} imaging dataset"
-                search_results = get_combined_results(SEARCH_QUERY, SERPER_API_KEY, TAVILY_API_KEY)
+                # Use the specific search queries for the selected category
+                query_list = search_queries[selected_category]
+                search_results = pd.DataFrame()
+                for query in query_list:
+                    st.write(f"Searching for: {query}")
+                    results = get_combined_results(query, SERPER_API_KEY, TAVILY_API_KEY)
+                    search_results = pd.concat([search_results, results], ignore_index=True)
+                
+                # Drop duplicates based on URL
+                search_results.drop_duplicates(subset=['URL'], inplace=True)
+                st.write(f"Total unique search results: {len(search_results)}")
+
                 if not search_results.empty:
                     new_df = process_search_results(search_results, max_urls=5)
                     st.write(f"Found {len(new_df)} new rows from search")
