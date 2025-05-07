@@ -30,8 +30,9 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY', 'gsk_v5QF873HQMkqpFywcJjYWGdyb3FYtzxqH8
 SERPER_API_KEY = os.getenv('SERPER_API_KEY', 'edf28dbbb85930e14c617ad0eb0479799de050c1')
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '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')
 
-client = OpenAI(base_url= "https://api.groq.com/openai/v1",
-    api_key= GROQ_API_KEY
+client = OpenAI(
+    base_url="https://api.groq.com/openai/v1",
+    api_key=GROQ_API_KEY
 )
 
 # Define the dataset state structure
@@ -197,7 +198,7 @@ def extract_info(state: DatasetState) -> DatasetState:
     prompt = EXTRACTION_PROMPT.format(text=state["paper_text"])
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": "You are an expert in extracting structured data from scientific texts."},
                 {"role": "user", "content": prompt}
@@ -398,7 +399,7 @@ def update_dataset(existing_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFr
 
     def is_duplicate_against_existing(row):
         primary_key = (row['dataset_name'], row['url'], row['doi'])
-        return any(k in seen_keys for k in primary_key if k != "Not specified")
+        return any(k in existing_keys for k in primary_key if k != "Not specified")
 
     combined_duplicates = []
     for idx, row in combined_df.iterrows():
