@@ -30,9 +30,8 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY', 'gsk_v5QF873HQMkqpFywcJjYWGdyb3FYtzxqH8
 SERPER_API_KEY = os.getenv('SERPER_API_KEY', 'edf28dbbb85930e14c617ad0eb0479799de050c1')
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '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')
 
-client = OpenAI(
-    base_url="https://api.aimlapi.com/v1",
-    api_key=API_KEY,
+client = OpenAI(base_url= "https://api.groq.com/openai/v1",
+    api_key= GROQ_API_KEY
 )
 
 # Define the dataset state structure
@@ -427,7 +426,7 @@ def process_query(query: str, excel_book: dict, categories: list) -> dict:
     prompt = QUERY_PROMPT.replace("{user_query}", query)
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": "You are a precise JSON-generating assistant. Always return a valid JSON object."},
                 {"role": "user", "content": prompt}
