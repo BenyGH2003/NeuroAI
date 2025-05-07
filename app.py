@@ -1,11 +1,16 @@
+# -*- coding: utf-8 -*-
+"""NeuroAI_Streamlit_App.py
+
+A Streamlit web app for the NeuroAI agent, allowing users to explore neuroradiology datasets through a conversational interface.
+Supports open-ended queries, displays datasets in tabulated format, and updates the database via web searches.
+"""
+
 import streamlit as st
 import pandas as pd
 import os
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, Optional
 from langchain.prompts import PromptTemplate
-from groq import Groq
-from dotenv import load_dotenv
 import requests
 from bs4 import BeautifulSoup
 import time
@@ -15,15 +20,22 @@ import io
 import PyPDF2
 from tavily import TavilyClient
 from tabulate import tabulate
+from dotenv import load_dotenv
+from openai import OpenAI
 
 # Load environment variables
 load_dotenv()
-GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')
+API_KEY = os.getenv('API_KEY', 'aeda830b81214fbd81c8077cbfd862fb')
+GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')
 SERPER_API_KEY = os.getenv('SERPER_API_KEY', 'edf28dbbb85930e14c617ad0eb0479799de050c1')
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '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')
-client = Groq(api_key=GROQ_API_KEY)
 
-# Define the state structure
+client = OpenAI(
+    base_url="https://api.aimlapi.com/v1",
+    api_key=API_KEY,
+)
+
+# Define the dataset state structure
 class DatasetState(TypedDict):
     paper_text: str
     dataset_name: Optional[str]
@@ -49,7 +61,7 @@ class DatasetState(TypedDict):
     histopathology: Optional[str]
     lab_data: Optional[str]
 
-# Updated extraction prompt (unchanged from previous)
+# Extraction prompt for dataset metadata
 EXTRACTION_PROMPT = PromptTemplate(
     input_variables=["text"],
     template="""
@@ -97,54 +109,56 @@ Final Instructions for AI:
 """
 )
 
-# Define search queries from the previous code
-search_queries = {
-    "Neurodegenerative": [
-        "neurodegenerative imaging dataset",
-        "Alzheimer imaging dataset",
-        "Multiple Sclerosis imaging dataset",
-        "Parkinson imaging dataset"
-    ],
-    "Neoplasm": [
-        "Glioma imaging dataset",
-        "Glioblastoma imaging dataset",
-        "Astrocytoma imaging dataset"
-    ],
-    "Cerebrovascular": [
-        "Cerebrovascular imaging dataset",
-        "Stroke imaging dataset",
-        "Brain aneurysm dataset",
-        "Cerebral angiography dataset"
-    ],
-    "Psychiatric": [
-        "Psychiatric disease imaging datasets",
-        "ADHD imaging datasets",
-        "MDD imaging datasets",
-        "Bipolar disease imaging datasets",
-        "Schizophrenia imaging datasets"
-    ],
-    "Spinal": [
-        "Spine MRI dataset",
-        "Spine CT scan dataset",
-        "Spine X-ray dataset",
-        "Degenerative spine disease imaging dataset",
-        "Spinal tumor imaging dataset",
-        "Herniated disc imaging dataset",
-        "Scoliosis imaging dataset",
-        "Spinal fracture imaging dataset"
-    ],
-    "Neurodevelopmental": [
-        "Neurodevelopmental MRI dataset",
-        "Autism spectrum disorder MRI",
-        "ADHD neuroimaging",
-        "Pediatric neuroimaging dataset",
-        "Developmental brain imaging"
-    ]
+# General-purpose query processing prompt
+QUERY_PROMPT = """
+You are NeuroAI, an expert in neuroradiology datasets. Your task is to answer the user's query about a dataset with the following structure:
+- Categories: Neurodegenerative, Neoplasm, Cerebrovascular, Psychiatric, Spinal, Neurodevelopmental
+- Columns: dataset_name, doi, url, year, access_type, institution, country, modality, resolution, subject_no_f (total subjects with female count in parentheses, e.g., "80(30)"), slice_scan_no, age_range, acquisition_protocol, format, segmentation_mask, preprocessing, disease, healthy_control, staging_information, clinical_data_score, histopathology, lab_data
+
+Disease-to-category mapping:
+- Neoplasm: brain tumor, glioma, glioblastoma, astrocytoma, meningioma
+- Neurodegenerative: Alzheimer's, Parkinson's, Multiple Sclerosis
+- Cerebrovascular: stroke, aneurysm
+- Psychiatric: schizophrenia, ADHD, depression
+- Spinal: scoliosis, herniated disc, spinal tumor
+- Neurodevelopmental: autism, ADHD
+
+Query: {user_query}
+
+Instructions:
+- Generate a concise, natural language response to the query, using the dataset's structure and categories.
+- If the query involves listing or filtering datasets (e.g., "find glioma datasets"), include a JSON array of filter conditions (e.g., [{"column": "disease", "value": "glioma"}, {"column": "category", "value": "Neoplasm"}]).
+- For analytical questions (e.g., "which dataset has more patients"), perform the analysis, describe the result, and include filters to display the relevant datasets in a table.
+- For general or descriptive questions (e.g., "tell me about brain tumors"), provide an overview and, if datasets are relevant, include filters to show examples.
+- If the query is unclear, ask for clarification with suggested follow-ups.
+- Always include 1-3 follow-up suggestions in a JSON array.
+- Return a JSON object with:
+  {
+    "response": "natural language response",
+    "filters": [{"column": "column_name", "value": "filter_value"}] or [],
+    "follow_up_suggestions": ["suggestion 1", "suggestion 2"]
+  }
+
+Example:
+Query: "Which glioma dataset has more patients"
+Response: {
+  "response": "The glioma dataset with the most patients is BraTS-2023 with 1200 subjects.",
+  "filters": [{"column": "disease", "value": "glioma"}, {"column": "category", "value": "Neoplasm"}],
+  "follow_up_suggestions": ["Want to see details of this dataset?", "Interested in other glioma datasets?"]
 }
+Query: "Tell me about brain tumors"
+Response: {
+  "response": "Brain tumors, such as gliomas and glioblastomas, are covered in the Neoplasm category, which includes datasets using MRI and CT modalities.",
+  "filters": [{"column": "category", "value": "Neoplasm"}],
+  "follow_up_suggestions": ["Want to see specific brain tumor datasets?", "Interested in a particular type like glioma?"]
+}
+"""
 
 def fetch_text_from_url(url):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
         if url.lower().endswith(".pdf"):
             response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
@@ -184,7 +198,7 @@ def extract_info(state: DatasetState) -> DatasetState:
     prompt = EXTRACTION_PROMPT.format(text=state["paper_text"])
     try:
         response = client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are an expert in extracting structured data from scientific texts."},
                 {"role": "user", "content": prompt}
@@ -312,7 +326,7 @@ def get_tavily_results(query: str, api_key: str, max_results: int = 30) -> pd.Da
         tavily_client = TavilyClient(api_key=api_key)
         response = tavily_client.search(query, max_results=max_results)
         results = response['results']
-        df = pd.DataFrame([{'Position': i+1, 'Title': r['title'], 'URL': r['url']} 
+        df = pd.DataFrame([{'Position': i+1, 'Title': r['title'], 'URL': r['url']}
                            for i, r in enumerate(results)])
         st.write(f"Tavily search returned {len(df)} results")
         return df
@@ -320,7 +334,7 @@ def get_tavily_results(query: str, api_key: str, max_results: int = 30) -> pd.Da
         st.error(f"Tavily search failed: {str(e)}")
         return pd.DataFrame()
 
-def get_combined_results(query: str, serper_api_key: str = None, tavily_api_key: str = None, 
+def get_combined_results(query: str, serper_api_key: str = None, tavily_api_key: str = None,
                         max_pages: int = 3, max_tavily_results: int = 30) -> pd.DataFrame:
     dfs = []
     if serper_api_key:
@@ -385,7 +399,7 @@ def update_dataset(existing_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFr
 
     def is_duplicate_against_existing(row):
         primary_key = (row['dataset_name'], row['url'], row['doi'])
-        return any(k in existing_keys for k in primary_key if k != "Not specified")
+        return any(k in seen_keys for k in primary_key if k != "Not specified")
 
     combined_duplicates = []
     for idx, row in combined_df.iterrows():
@@ -398,112 +412,135 @@ def update_dataset(existing_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFr
     st.write(f"Final cleaned dataframe size: {len(cleaned_df)} rows")
     return cleaned_df
 
-def search_dataset(df: pd.DataFrame, modality: str, disease: str, segmentation: str, access_type: str) -> dict:
-    relevant_columns = [
-        'dataset_name', 'doi', 'url', 'year', 'access_type', 'institution', 'country',
-        'modality', 'resolution', 'subject_no_f', 'slice_scan_no', 'age_range',
-        'acquisition_protocol', 'format', 'segmentation_mask', 'preprocessing', 'disease',
-        'healthy_control', 'staging_information', 'clinical_data_score', 'histopathology', 'lab_data'
-    ]
-    filtered_df = df[relevant_columns].head(20)
-    dataset_entries = [
-        f"Dataset: {row['dataset_name']} | Modality: {row['modality']} | Disease: {row['disease']} | "
-        f"Segmentation: {row['segmentation_mask']} | Access: {row['access_type']} | URL: {row['url']}"
-        for _, row in filtered_df.iterrows()
-    ]
-    dataset_context = "\n".join(dataset_entries)
+def apply_filters(df: pd.DataFrame, filters: list, category: str = None) -> pd.DataFrame:
+    filtered_df = df
+    for f in filters:
+        column = f["column"]
+        value = f["value"]
+        if column == "category":
+            continue  # Category is handled at the DataFrame selection level
+        if column in df.columns:
+            filtered_df = filtered_df[filtered_df[column].str.contains(value, case=False, na=False)]
+    return filtered_df
 
-    search_prompt = f"""
-    You are a medical imaging dataset expert. Your task is to find datasets matching specific criteria.
-
-    USER CRITERIA:
-    - Modality: {modality}
-    - Disease: {disease}
-    - Segmentation Required: {segmentation}
-    - Access Type: {access_type}
-
-    AVAILABLE DATASETS:
-    {dataset_context}
-
-    INSTRUCTIONS:
-    1. Find exact and partial matches based on the criteria
-    2. Return ONLY a valid JSON object with this exact structure:
-    {{
-        "matches": [
-            {{
-                "dataset_name": "exact name from list",
-                "url": "exact url from list",
-                "relevance": "one sentence explanation"
-            }}
-        ],
-        "alternatives": [
-            {{
-                "dataset_name": "exact name from list",
-                "url": "exact url from list",
-                "explanation": "one sentence explanation"
-            }}
-        ]
-    }}
-    """
+def process_query(query: str, excel_book: dict, categories: list) -> dict:
+    prompt = QUERY_PROMPT.replace("{user_query}", query)
     try:
         response = client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a precise JSON-generating assistant."},
-                {"role": "user", "content": search_prompt}
+                {"role": "system", "content": "You are a precise JSON-generating assistant. Always return a valid JSON object."},
+                {"role": "user", "content": prompt}
             ],
             temperature=0,
             max_tokens=1000
         )
-        result = response.choices[0].message.content.strip().replace("```json", "").replace("```", "")
-        parsed_results = json.loads(result)
-        return parsed_results
+        result = response.choices[0].message.content.strip()
+        result = result.replace("```json", "").replace("```", "").strip()
+        parsed_result = json.loads(result)
+        return parsed_result
+    except json.JSONDecodeError as e:
+        st.error(f"JSON Decode Error: {str(e)}")
+        st.error(f"Raw API Response: {response.choices[0].message.content}")
+        return {
+            "response": "I didn't quite understand your request. Could you clarify what you're looking for?",
+            "filters": [],
+            "follow_up_suggestions": ["Are you interested in a specific category like Neoplasm?", "Do you want to search for datasets?"]
+        }
     except Exception as e:
-        st.error(f"Error querying LLM: {str(e)}")
-        return perform_basic_matching(filtered_df, modality, disease, segmentation, access_type)
+        st.error(f"Query processing failed: {str(e)}")
+        return {
+            "response": "Something went wrong. Could you try again or clarify your request?",
+            "filters": [],
+            "follow_up_suggestions": ["Try asking about a category or dataset feature."]
+        }
 
-def perform_basic_matching(df, modality, disease, segmentation, access_type):
-    matches = []
-    alternatives = []
-    for _, row in df.iterrows():
-        if (modality.lower() in str(row['modality']).lower() and
-            disease.lower() in str(row['disease']).lower() and
-            segmentation.lower() in str(row['segmentation_mask']).lower() and
-            access_type.lower() in str(row['access_type']).lower()):
-            matches.append({
-                "dataset_name": row['dataset_name'],
-                "url": row['url'],
-                "relevance": "Matches all criteria"
-            })
-        elif (modality.lower() in str(row['modality']).lower() or
-              disease.lower() in str(row['disease']).lower()):
-            alternatives.append({
-                "dataset_name": row['dataset_name'],
-                "url": row['url'],
-                "explanation": "Partial match on modality or disease"
-            })
-    return {"matches": matches, "alternatives": alternatives}
+def format_response(response: str, df: pd.DataFrame = None, follow_up_suggestions: list = []) -> str:
+    output = f"{response}\n"
+    if df is not None and not df.empty:
+        column_map = {
+            'dataset_name': 'Name',
+            'doi': 'DOI',
+            'url': 'URL',
+            'year': 'Year',
+            'access_type': 'Access',
+            'institution': 'Institution',
+            'country': 'Country',
+            'modality': 'Modality',
+            'resolution': 'Resolution',
+            'subject_no_f': 'Subjects (F)',
+            'slice_scan_no': 'Slices/Scans',
+            'age_range': 'Age Range',
+            'acquisition_protocol': 'Protocol',
+            'format': 'Format',
+            'segmentation_mask': 'Segmentation',
+            'preprocessing': 'Preprocessing',
+            'disease': 'Disease',
+            'healthy_control': 'Healthy?',
+            'staging_information': 'Staging',
+            'clinical_data_score': 'Clinical Data',
+            'histopathology': 'Histopath?',
+            'lab_data': 'Lab Data?'
+        }
+        relevant_columns = list(column_map.keys())
+        display_df = df[relevant_columns].rename(columns=column_map)
+        output += "\n**Appendix: Dataset Details**\n"
+        output += f"```\n{tabulate(display_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```\n"
+    if follow_up_suggestions:
+        output += "\n**What else can I help with?**\n"
+        for i, suggestion in enumerate(follow_up_suggestions, 1):
+            output += f"- {suggestion}\n"
+    return output
 
-def display_all_datasets(excel_book, categories):
-    """Helper function to display all datasets across categories in tabs."""
-    tabs = st.tabs(categories)
-    for tab, category in zip(tabs, categories):
-        with tab:
-            df = excel_book[category].rename(columns={
-                'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
-                'access_type': 'Access', 'institution': 'Institution', 'country': 'Country',
-                'modality': 'Modality', 'resolution': 'Resolution', 'subject_no_f': 'Subjects (F)',
-                'slice_scan_no': 'Slices/Scans', 'age_range': 'Age Range', 'acquisition_protocol': 'Protocol',
-                'format': 'Format', 'segmentation_mask': 'Segmentation', 'preprocessing': 'Preprocessing',
-                'disease': 'Disease', 'healthy_control': 'Healthy?', 'staging_information': 'Staging',
-                'clinical_data_score': 'Clinical Data', 'histopathology': 'Histopath?', 'lab_data': 'Lab Data?'
-            })
-            st.write(f"**All Datasets in {category}**")
-            st.dataframe(df, use_container_width=True)
+# Define search queries
+search_queries = {
+    "Neurodegenerative": [
+        "neurodegenerative imaging dataset",
+        "Alzheimer imaging dataset",
+        "Multiple Sclerosis imaging dataset",
+        "Parkinson imaging dataset"
+    ],
+    "Neoplasm": [
+        "Glioma imaging dataset",
+        "Glioblastoma imaging dataset",
+        "Astrocytoma imaging dataset"
+    ],
+    "Cerebrovascular": [
+        "Cerebrovascular imaging dataset",
+        "Stroke imaging dataset",
+        "Brain aneurysm dataset",
+        "Cerebral angiography dataset"
+    ],
+    "Psychiatric": [
+        "Psychiatric disease imaging datasets",
+        "ADHD imaging datasets",
+        "MDD imaging datasets",
+        "Bipolar disease imaging datasets",
+        "Schizophrenia imaging datasets"
+    ],
+    "Spinal": [
+        "Spine MRI dataset",
+        "Spine CT scan dataset",
+        "Spine X-ray dataset",
+        "Degenerative spine disease imaging dataset",
+        "Spinal tumor imaging dataset",
+        "Herniated disc imaging dataset",
+        "Scoliosis imaging dataset",
+        "Spinal fracture imaging dataset"
+    ],
+    "Neurodevelopmental": [
+        "Neurodevelopmental MRI dataset",
+        "Autism spectrum disorder MRI",
+        "ADHD neuroimaging",
+        "Pediatric neuroimaging dataset",
+        "Developmental brain imaging"
+    ]
+}
 
 # Streamlit App
 def main():
     st.title("NeuroAI: Neuroradiology Imaging Dataset Finder")
+    st.markdown("Explore a rich database of neuroradiology datasets. Ask anything about categories, datasets, or trends!")
 
     # Sidebar for Update Database
     with st.sidebar:
@@ -535,15 +572,13 @@ def main():
                     existing_df = excel_book[selected_category]
                     st.write("No existing dataset found, initializing empty dataframe")
 
-                # Use the specific search queries for the selected category
                 query_list = search_queries[selected_category]
                 search_results = pd.DataFrame()
                 for query in query_list:
                     st.write(f"Searching for: {query}")
                     results = get_combined_results(query, SERPER_API_KEY, TAVILY_API_KEY)
                     search_results = pd.concat([search_results, results], ignore_index=True)
-                
-                # Drop duplicates based on URL
+
                 search_results.drop_duplicates(subset=['URL'], inplace=True)
                 st.write(f"Total unique search results: {len(search_results)}")
 
@@ -563,7 +598,6 @@ def main():
 
     # Load dataset
     dataset_file = 'dataset.xlsx'
-    categories = ['Neurodegenerative', 'Neoplasm', 'Cerebrovascular', 'Psychiatric', 'Spinal', 'Neurodevelopmental']
     if 'excel_book' not in st.session_state:
         if os.path.exists(dataset_file):
             st.session_state['excel_book'] = pd.read_excel(dataset_file, sheet_name=None)
@@ -579,11 +613,7 @@ def main():
     # Chat Interface
     st.header("Chat with NeuroAI Agent")
     if 'chat_history' not in st.session_state:
-        st.session_state['chat_history'] = [{"role": "assistant", "content": f"Here is NeuroAI agent, I can help you find your neuroradiology imaging dataset.\n\nI have datasets in multiple categories: {', '.join(categories)}\nWhich category are you interested in? (or type 'all' for all datasets)"}]
-    if 'step' not in st.session_state:
-        st.session_state['step'] = "category"
-    if 'criteria' not in st.session_state:
-        st.session_state['criteria'] = {}
+        st.session_state['chat_history'] = [{"role": "assistant", "content": "Hello! I'm NeuroAI, your assistant for exploring neuroradiology datasets. Ask me anything about datasets, categories, or trends!"}]
 
     # Display chat history
     for message in st.session_state['chat_history']:
@@ -591,157 +621,33 @@ def main():
             st.markdown(message["content"])
 
     # User input
-    prompt = st.chat_input("Your response:")
+    prompt = st.chat_input("Ask about neuroradiology datasets:")
     if prompt:
         st.session_state['chat_history'].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Process based on current step
-        if st.session_state['step'] == "category":
-            prompt_lower = prompt.lower()
-            all_keywords = ['all', 'none', 'neither', 'i want all datasets']
-            if prompt_lower in all_keywords:
-                response = "Displaying all datasets across all categories below:"
-                st.session_state['chat_history'].append({"role": "assistant", "content": response})
-                with st.chat_message("assistant"):
-                    st.markdown(response)
-                    display_all_datasets(st.session_state['excel_book'], categories)
-                response = "\nWould you like to search again? (y/n)"
-                st.session_state['step'] = "repeat"
-            elif prompt.capitalize() not in categories:
-                response = f"Invalid category. Please choose from: {', '.join(categories)} or type 'all' for all datasets.\nWhich category are you interested in?"
-                st.session_state['step'] = "category"
-            else:
-                response = f"Great, you've selected {prompt.capitalize()}!\nDo you want a specific subset of datasets or all datasets in this category? (subset/all)"
-                st.session_state['step'] = "subset_or_all"
-                st.session_state['criteria']['category'] = prompt.capitalize()
+        with st.spinner("Processing your query..."):
+            query_result = process_query(prompt, st.session_state['excel_book'], categories)
+            response = query_result["response"]
+            filters = query_result["filters"]
+            follow_up_suggestions = query_result["follow_up_suggestions"]
 
-        elif st.session_state['step'] == "subset_or_all":
-            if prompt.lower() == "all":
-                response = f"Here are all datasets in {st.session_state['criteria']['category']}:\n\n"
-                df = st.session_state['excel_book'][st.session_state['criteria']['category']].rename(columns={
-                    'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
-                    'access_type': 'Access', 'institution': 'Institution', 'country': 'Country',
-                    'modality': 'Modality', 'resolution': 'Resolution', 'subject_no_f': 'Subjects (F)',
-                    'slice_scan_no': 'Slices/Scans', 'age_range': 'Age Range', 'acquisition_protocol': 'Protocol',
-                    'format': 'Format', 'segmentation_mask': 'Segmentation', 'preprocessing': 'Preprocessing',
-                    'disease': 'Disease', 'healthy_control': 'Healthy?', 'staging_information': 'Staging',
-                    'clinical_data_score': 'Clinical Data', 'histopathology': 'Histopath?', 'lab_data': 'Lab Data?'
-                })
-                response += f"```\n{tabulate(df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```"
-                response += "\nWould you like to search again? (y/n)"
-                st.session_state['step'] = "repeat"
-            elif prompt.lower() == "subset":
-                response = f"What modality do you want for {st.session_state['criteria']['category']} datasets? (e.g., MRI, CT)"
-                st.session_state['step'] = "modality"
-            else:
-                response = "Please respond with 'subset' or 'all'.\nDo you want a specific subset of datasets or all datasets in this category?"
-                st.session_state['step'] = "subset_or_all"
-
-        elif st.session_state['step'] == "modality":
-            st.session_state['criteria']['modality'] = prompt
-            response = f"What {st.session_state['criteria']['category'].lower()} disease are you interested in?"
-            st.session_state['step'] = "disease"
-
-        elif st.session_state['step'] == "disease":
-            st.session_state['criteria']['disease'] = prompt
-            response = "Do you need segmentation masks? (Yes/No)"
-            st.session_state['step'] = "segmentation"
-
-        elif st.session_state['step'] == "segmentation":
-            st.session_state['criteria']['segmentation'] = prompt
-            response = "What type of access do you prefer? (e.g., open, restricted)"
-            st.session_state['step'] = "access_type"
-
-        elif st.session_state['step'] == "access_type":
-            st.session_state['criteria']['access_type'] = prompt
-            with st.spinner("Searching for datasets..."):
-                df = st.session_state['excel_book'][st.session_state['criteria']['category']]
-                results = search_dataset(
-                    df,
-                    st.session_state['criteria']['modality'],
-                    st.session_state['criteria']['disease'],
-                    st.session_state['criteria']['segmentation'],
-                    st.session_state['criteria']['access_type']
-                )
-                response = ""
-                if results["matches"]:
-                    response += "**Best Matching Datasets:**\n\n"
-                    match_names = [match["dataset_name"] for match in results["matches"]]
-                    matches_df = df[df['dataset_name'].isin(match_names)][[
-                        'dataset_name', 'doi', 'url', 'year', 'access_type', 'institution', 'country',
-                        'modality', 'resolution', 'subject_no_f', 'slice_scan_no', 'age_range',
-                        'acquisition_protocol', 'format', 'segmentation_mask', 'preprocessing', 'disease',
-                        'healthy_control', 'staging_information', 'clinical_data_score', 'histopathology', 'lab_data'
-                    ]].rename(columns={
-                        'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
-                        'access_type': 'Access', 'institution': 'Institution', 'country': 'Country',
-                        'modality': 'Modality', 'resolution': 'Resolution', 'subject_no_f': 'Subjects (F)',
-                        'slice_scan_no': 'Slices/Scans', 'age_range': 'Age Range', 'acquisition_protocol': 'Protocol',
-                        'format': 'Format', 'segmentation_mask': 'Segmentation', 'preprocessing': 'Preprocessing',
-                        'disease': 'Disease', 'healthy_control': 'Healthy?', 'staging_information': 'Staging',
-                        'clinical_data_score': 'Clinical Data', 'histopathology': 'Histopath?', 'lab_data': 'Lab Data?'
-                    })
-                    response += f"```\n{tabulate(matches_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```\n"
+            # Apply filters to retrieve datasets if specified
+            df = None
+            if filters:
+                category = next((f["value"] for f in filters if f["column"] == "category"), None)
+                if category and category.capitalize() in categories:
+                    df = st.session_state['excel_book'][category.capitalize()]
                 else:
-                    response += "No exact matches found.\n"
-                if results["alternatives"]:
-                    response += "**Alternative Suggestions:**\n\n"
-                    alt_names = [alt["dataset_name"] for alt in results["alternatives"]]
-                    alternatives_df = df[df['dataset_name'].isin(alt_names)][[
-                        'dataset_name', 'doi', 'url', 'year', 'access_type', 'institution', 'country',
-                        'modality', 'resolution', 'subject_no_f', 'slice_scan_no', 'age_range',
-                        'acquisition_protocol', 'format', 'segmentation_mask', 'preprocessing', 'disease',
-                        'healthy_control', 'staging_information', 'clinical_data_score', 'histopathology', 'lab_data'
-                    ]].rename(columns={
-                        'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
-                        'access_type': 'Access', 'institution': 'Institution', 'country': 'Country',
-                        'modality': 'Modality', 'resolution': 'Resolution', 'subject_no_f': 'Subjects (F)',
-                        'slice_scan_no': 'Slices/Scans', 'age_range': 'Age Range', 'acquisition_protocol': 'Protocol',
-                        'format': 'Format', 'segmentation_mask': 'Segmentation', 'preprocessing': 'Preprocessing',
-                        'disease': 'Disease', 'healthy_control': 'Healthy?', 'staging_information': 'Staging',
-                        'clinical_data_score': 'Clinical Data', 'histopathology': 'Histopath?', 'lab_data': 'Lab Data?'
-                    })
-                    response += f"```\n{tabulate(alternatives_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```\n"
-                if not results["matches"] and not results["alternatives"]:
-                    response += "No datasets found matching your criteria. Try broadening your search parameters.\n"
-                
-                # Display all datasets in the category
-                response += f"\n**All Datasets in {st.session_state['criteria']['category']}**\n\n"
-                all_df = df.rename(columns={
-                    'dataset_name': 'Name', 'doi': 'DOI', 'url': 'URL', 'year': 'Year',
-                    'access_type': 'Access', 'institution': 'Institution', 'country': 'Country',
-                    'modality': 'Modality', 'resolution': 'Resolution', 'subject_no_f': 'Subjects (F)',
-                    'slice_scan_no': 'Slices/Scans', 'age_range': 'Age Range', 'acquisition_protocol': 'Protocol',
-                    'format': 'Format', 'segmentation_mask': 'Segmentation', 'preprocessing': 'Preprocessing',
-                    'disease': 'Disease', 'healthy_control': 'Healthy?', 'staging_information': 'Staging',
-                    'clinical_data_score': 'Clinical Data', 'histopathology': 'Histopath?', 'lab_data': 'Lab Data?'
-                })
-                response += f"```\n{tabulate(all_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```"
-                
-                response += "\nWould you like to search again? (y/n)"
-            st.session_state['step'] = "repeat"
+                    all_dfs = [df for df in st.session_state['excel_book'].values() if not df.empty]
+                    df = pd.concat(all_dfs) if all_dfs else pd.DataFrame()
+                df = apply_filters(df, filters)
 
-        elif st.session_state['step'] == "repeat":
-            if prompt.lower() == 'y':
-                response = f"I have datasets in multiple categories: {', '.join(categories)}\nWhich category are you interested in? (or type 'all' for all datasets)"
-                st.session_state['step'] = "category"
-                st.session_state['criteria'] = {}
-            else:
-                response = "Goodbye!"
-                st.session_state['step'] = "done"
-
-        if st.session_state['step'] != "done":
-            st.session_state['chat_history'].append({"role": "assistant", "content": response})
+            response_text = format_response(response, df, follow_up_suggestions)
+            st.session_state['chat_history'].append({"role": "assistant", "content": response_text})
             with st.chat_message("assistant"):
-                st.markdown(response)
-        else:
-            st.session_state['chat_history'].append({"role": "assistant", "content": response})
-            with st.chat_message("assistant"):
-                st.markdown(response)
-            st.session_state['step'] = "category"
-            st.session_state['chat_history'] = [{"role": "assistant", "content": f"Here is NeuroAI agent, I can help you find your neuroradiology imaging dataset.\n\nI have datasets in multiple categories: {', '.join(categories)}\nWhich category are you interested in? (or type 'all' for all datasets)"}]
+                st.markdown(response_text)
 
 if __name__ == "__main__":
     main()
