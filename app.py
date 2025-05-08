@@ -19,7 +19,7 @@ load_dotenv()
 
 # Access the API key from environment variables (GitHub Secrets in production)
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-
+ 
 # Check if the API key is loaded correctly
 if not OPENAI_API_KEY:
     st.error("API key not found. Please make sure your GitHub Secrets are configured properly.")
