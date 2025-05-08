@@ -16,11 +16,10 @@ from openai import OpenAI
 
 # Load environment variables
 load_dotenv()
-OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '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')
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY
+    api_key="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" 
 )
 
 # Define the dataset state structure
