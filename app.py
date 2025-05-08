@@ -27,7 +27,7 @@ from openai import OpenAI
 load_dotenv()
 API_KEY = os.getenv('API_KEY', 'aeda830b81214fbd81c8077cbfd862fb')
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')
-OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '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')
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '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')
 SERPER_API_KEY = os.getenv('SERPER_API_KEY', 'edf28dbbb85930e14c617ad0eb0479799de050c1')
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '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')
 
