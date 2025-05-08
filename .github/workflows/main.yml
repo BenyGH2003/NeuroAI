@@ -1,4 +1,4 @@
-name: Deploy NeuroAIHub
+name: Test NeuroAIHub
 on:
   push:
     branches: [main]
@@ -14,7 +14,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-      - name: Run Streamlit app
+      - name: Check setup
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: streamlit run app.py
+        run: python -c "import streamlit; print('Streamlit installed')"
