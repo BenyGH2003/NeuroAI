@@ -228,7 +228,7 @@ def main():
     # Sidebar is no longer needed
     # with st.sidebar:
     #     st.header("Database Controls")
-    #     categories = ['Neurodegenerative', 'Neoplasm', 'Cerebrovascular', 'Psychiatric', 'Spinal', 'Neurodevelopmental']
+    categories = ['Neurodegenerative', 'Neoplasm', 'Cerebrovascular', 'Psychiatric', 'Spinal', 'Neurodevelopmental']
     #     selected_category = st.selectbox("Select Category to Update", categories)
     #     if st.button("Update Database"):
     #         with st.spinner(f"Updating the {selected_category} Database..."):
