@@ -224,14 +224,23 @@ def main():
     st.title("NeuroAIHub: Neuroradiology Imaging Dataset Finder")
     st.markdown("Explore a rich database of neuroradiology datasets. Ask anything about categories, datasets, or trends!")
 
-    # Load dataset
+    # Remove the sidebar update controls section
+    # Sidebar is no longer needed
+    # with st.sidebar:
+    #     st.header("Database Controls")
+    #     categories = ['Neurodegenerative', 'Neoplasm', 'Cerebrovascular', 'Psychiatric', 'Spinal', 'Neurodevelopmental']
+    #     selected_category = st.selectbox("Select Category to Update", categories)
+    #     if st.button("Update Database"):
+    #         with st.spinner(f"Updating the {selected_category} Database..."):
+    #             # Database update code removed...
+
+    # Load the dataset
     dataset_file = 'dataset.xlsx'
-    categories = ['Neurodegenerative', 'Neoplasm', 'Cerebrovascular', 'Psychiatric', 'Spinal', 'Neurodevelopmental']
     if 'excel_book' not in st.session_state:
         if os.path.exists(dataset_file):
             st.session_state['excel_book'] = pd.read_excel(dataset_file, sheet_name=None)
         else:
-            st.session_state['excel_book'] = {cat: pd.DataFrame(columns=[
+            st.session_state['excel_book'] = {cat: pd.DataFrame(columns=[ 
                 "dataset_name", "doi", "url", "year", "access_type", "institution", "country",
                 "modality", "resolution", "subject_no_f", "slice_scan_no", "age_range",
                 "acquisition_protocol", "format", "segmentation_mask", "preprocessing", "disease",
@@ -261,7 +270,6 @@ def main():
             response = query_result["response"]
             filters = query_result["filters"]
             follow_up_suggestions = query_result["follow_up_suggestions"]
-            dataset_explanation = query_result.get("dataset_explanation", "")
 
             # Apply filters to retrieve datasets if specified
             df = None
@@ -274,7 +282,7 @@ def main():
                     df = pd.concat(all_dfs) if all_dfs else pd.DataFrame()
                 df = apply_filters(df, filters)
 
-            response_text = format_response(response, df, follow_up_suggestions, dataset_explanation)
+            response_text = format_response(response, df, follow_up_suggestions)
             st.session_state['chat_history'].append({"role": "assistant", "content": response_text})
             with st.chat_message("assistant"):
                 st.markdown(response_text)
