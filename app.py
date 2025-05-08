@@ -19,7 +19,7 @@ load_dotenv()
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key="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" 
+    api_key="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" 
 )
 
 # Define the dataset state structure
