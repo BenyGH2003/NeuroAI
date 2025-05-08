@@ -27,12 +27,13 @@ from openai import OpenAI
 load_dotenv()
 API_KEY = os.getenv('API_KEY', 'aeda830b81214fbd81c8077cbfd862fb')
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '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')
 SERPER_API_KEY = os.getenv('SERPER_API_KEY', 'edf28dbbb85930e14c617ad0eb0479799de050c1')
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY', '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')
 
 client = OpenAI(
-    base_url="https://api.groq.com/openai/v1",
-    api_key=GROQ_API_KEY
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY
 )
 
 # Define the dataset state structure
@@ -198,7 +199,7 @@ def extract_info(state: DatasetState) -> DatasetState:
     prompt = EXTRACTION_PROMPT.format(text=state["paper_text"])
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="meta-llama/llama-4-scout:free",
             messages=[
                 {"role": "system", "content": "You are an expert in extracting structured data from scientific texts."},
                 {"role": "user", "content": prompt}
