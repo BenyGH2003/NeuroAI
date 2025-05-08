@@ -1,0 +1,32 @@
+name: Deploy App
+
+on:
+  push:
+    branches:
+      - main  # The workflow will run whenever you push to the 'main' branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest  # This specifies that the job runs on an Ubuntu machine
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2  # This step checks out your repository code
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'  # You can specify the Python version you want here
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip  # Upgrade pip to the latest version
+        pip install -r requirements.txt  # Install all the dependencies from requirements.txt
+
+    - name: Set OPENAI_API_KEY as environment variable
+      run: echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
+      # This step makes your GitHub secret available to the following steps as an environment variable
+
+    - name: Run the app
+      run: |
+        streamlit run app.py  # This step runs your Streamlit app (replace 'app.py' with your actual app file)
