@@ -18,15 +18,15 @@ from openai import OpenAI
 load_dotenv() 
 
 # Access the API key from environment variables (GitHub Secrets in production)
-API_KEY = os.getenv('API_KEY')
+OPENAI_API_KEY = os.getenv('API_KEY')
 
 # Check if the API key is loaded correctly
-if not API_KEY:
+if not OPENAI_API_KEY:
     st.error("API key not found. Please make sure your GitHub Secrets are configured properly.")
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=API_KEY  # Use the API key from the environment variable
+    api_key=OPENAI_API_KEY  # Use the API key from the environment variable
 )
 
 # Define the dataset state structure
