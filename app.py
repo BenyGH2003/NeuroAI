@@ -16,7 +16,7 @@ from openai import OpenAI
 
 # Load environment variables
 load_dotenv() 
-
+ 
 # Access the API key from environment variables (GitHub Secrets in production)
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
  
