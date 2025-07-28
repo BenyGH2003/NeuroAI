@@ -38,18 +38,12 @@ st.caption("Your conversational assistant for neuroradiology datasets. I can fin
 
 # --- API KEY & LLM SETUP ---
 # For deployment, use st.secrets. For local development, you can use python-dotenv.
-try:
-    # This is the recommended way for deployment on Streamlit Community Cloud
-    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-except (FileNotFoundError, KeyError):
-    # Fallback for local development using a .env file
-    load_dotenv()
-    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-
+# --- API Key Setup ---
+load_dotenv()
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 if not OPENAI_API_KEY:
-    st.error("OPENAI_API_KEY not found. Please set it in your Streamlit secrets or a local .env file.", icon="🚨")
+    st.warning("⚠️ API key not found. Please set OPENAI_API_KEY in Streamlit secrets or environment.")
     st.stop()
-
 
 # Set up the LLM using the provided API key
 llm = ChatOpenAI(
