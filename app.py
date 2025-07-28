@@ -37,31 +37,44 @@ st.caption("Your conversational assistant for neuroradiology datasets. I can fin
 
 
 # --- API KEY & LLM SETUP ---
-load_dotenv()
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# For deployment, use st.secrets. For local development, you can use python-dotenv.
+try:
+    # This is the recommended way for deployment on Streamlit Community Cloud
+    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+except (FileNotFoundError, KeyError):
+    # Fallback for local development using a .env file
+    load_dotenv()
+    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
-# Set up the LLM using the provided API key from secrets
+if not OPENAI_API_KEY:
+    st.error("OPENAI_API_KEY not found. Please set it in your Streamlit secrets or a local .env file.", icon="🚨")
+    st.stop()
 
+
+# Set up the LLM using the provided API key
 llm = ChatOpenAI(
-    openai_api_key=OPENAI_API_KEY,
-    model_name='gpt-4.1-mini',
-    base_url="https://api.avalai.ir/v1",
-    temperature=0
+    openai_api_key=OPENAI_API_KEY,
+    model_name='gpt-4.1-mini',
+    base_url="https://api.avalai.ir/v1",
+    temperature=0
 )
+
 
 # --- DATA LOADING (Cached to run only once) ---
 @st.cache_resource
 def load_data():
-    """Loads and prepares data from the Excel file."""
-    file_path = 'neuroradiology_datasets_S_L.xlsx'
-    if not os.path.exists(file_path):
-        st.error(f"FATAL: The data file '{file_path}' was not found. Please make sure it's in your repository.", icon="️⚠️")
-        st.stop()
-    xls = pd.ExcelFile(file_path)
-    sheet_names = xls.sheet_names
-    dataframes = {sheet: pd.read_excel(xls, sheet_name=sheet).assign(category=sheet) for sheet in sheet_names}
-    combined_df = pd.concat(dataframes.values(), ignore_index=True)
-    return dataframes, combined_df, sheet_names
+    """Loads and prepares data from the Excel file."""
+    file_path = 'neuroradiology_datasets_S_L.xlsx'
+    if not os.path.exists(file_path):
+        st.error(f"FATAL: The data file '{file_path}' was not found. Please make sure it's in your repository.", icon="️⚠️")
+        st.stop()
+
+    xls = pd.ExcelFile(file_path)
+    sheet_names = xls.sheet_names
+    dataframes = {sheet: pd.read_excel(xls, sheet_name=sheet).assign(category=sheet) for sheet in sheet_names}
+    combined_df = pd.concat(dataframes.values(), ignore_index=True)
+
+    return dataframes, combined_df, sheet_names
 
 dataframes, combined_df, sheet_names = load_data()
 
