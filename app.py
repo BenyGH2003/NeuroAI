@@ -39,9 +39,6 @@ st.caption("Your conversational assistant for neuroradiology datasets. I can fin
 # --- API KEY & LLM SETUP ---
 load_dotenv()
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-if not OPENAI_API_KEY:
-    st.warning("⚠️ API key not found. Please set OPENAI_API_KEY in Streamlit secrets or environment.")
-    st.stop()
 
 # Set up the LLM using the provided API key from secrets
 
