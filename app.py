@@ -82,28 +82,39 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
         "histopathology", "lab_data", "notes"
     ]
 
-    # --- Tool 1: Hybrid Dataset Finder ---
+    # --- Tool 1: Hybrid Dataset Finder (UPDATED) ---
     def hybrid_dataset_finder(user_query: str) -> str:
-        parser_prompt_template = """
-        You are an expert query parser. Your job is to deconstruct the user's query and map it to a structured JSON filter based on the available options.
-        User Query: "{query}"
-        Available options for filtering:
-        - category: {category_options}
-        - disease: {disease_options}
-        - access_type: {access_type_options}
-        - modality: {modality_options}
-        - segmentation_mask: {segmentation_mask_options}
-        - institution: {institution_options}
-        - country: {country_options}
-        - format: {format_options}
-        - healthy_control: {healthy_control_options}
-        - staging_information: {staging_information_options}
-        - clinical_data_score: {clinical_data_score_options}
-        - histopathology: {histopathology_options}
-        - lab_data: {lab_data_options}
-        Analyze the user's query and translate it into a JSON object with a 'filters' key. For numerical fields like 'year' or 'subject_no_f', create a sub-object with 'operator' (e.g., '>', '<=', '==') and 'value'. If a filter is not mentioned, omit it. Respond with ONLY the JSON object.
         """
-        parser_prompt = PromptTemplate.from_template(parser_prompt_template)
+        Parses a user query to create structured filters based on an expanded set of columns,
+        executes a search, and returns the raw filtered data as a JSON object.
+        """
+        parser_prompt = PromptTemplate.from_template(
+            """
+            You are an expert query parser. Your job is to deconstruct the user's query and map it to a structured JSON filter based on the available options.
+            User Query: "{query}"
+            Available options for filtering:
+            - category: {category_options}
+            - disease: {disease_options}
+            - access_type: {access_type_options}
+            - modality: {modality_options}
+            - segmentation_mask: {segmentation_mask_options}
+            - institution: {institution_options}
+            - country: {country_options}
+            - format: {format_options}
+            - healthy_control: {healthy_control_options}
+            - staging_information: {staging_information_options}
+            - clinical_data_score: {clinical_data_score_options}
+            - histopathology: {histopathology_options}
+            - lab_data: {lab_data_options}
+
+            Analyze the user's query and translate it into a JSON object with a 'filters' key.
+            - For each field, choose the single best-matching value from its respective options list.
+            - For boolean-like fields (e.g., segmentation_mask, healthy_control), map terms like 'with segmentation' to 'Yes' and 'without' to 'No'.
+            - For numerical fields like 'year' or 'subjects', create a sub-object with 'operator' and 'value'.
+            - If a filter is not mentioned, omit it. Respond with ONLY the JSON object.
+            """
+        )
+
         parser_chain = parser_prompt | _llm
 
         all_options = {
@@ -136,24 +147,26 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
                 return json.dumps({"result": "I couldn't identify any specific search criteria."})
 
             for key, value in filters.items():
-                if isinstance(value, dict) and 'operator' in value and 'value' in value:
+                if isinstance(value, dict):
                     op, val = value['operator'], value['value']
-
+                    
+                    # This check is retained to prevent crashes
                     if not isinstance(val, (int, float)):
                         continue
-
-                    col_to_filter = 'subject_no_f' if 'subjects' in key else key
-                    if col_to_filter in filtered_df.columns:
-                        filtered_df[col_to_filter] = pd.to_numeric(filtered_df[col_to_filter], errors='coerce')
-                        if op == '>': filtered_df = filtered_df[filtered_df[col_to_filter] > val]
-                        elif op == '>=': filtered_df = filtered_df[filtered_df[col_to_filter] >= val]
-                        elif op == '<': filtered_df = filtered_df[filtered_df[col_to_filter] < val]
-                        elif op == '<=': filtered_df = filtered_df[filtered_df[col_to_filter] <= val]
-                        elif op == '==': filtered_df = filtered_df[filtered_df[col_to_filter] == val]
+                    
+                    if key in filtered_df.columns:
+                        filtered_df[key] = pd.to_numeric(filtered_df[key], errors='coerce')
+                        if op == '>': filtered_df = filtered_df[filtered_df[key] > val]
+                        elif op == '>=': filtered_df = filtered_df[filtered_df[key] >= val]
+                        elif op == '<': filtered_df = filtered_df[filtered_df[key] < val]
+                        elif op == '<=': filtered_df = filtered_df[filtered_df[key] <= val]
+                        elif op == '==': filtered_df = filtered_df[filtered_df[key] == val]
+                
                 elif key in filtered_df.columns:
-                    filtered_df = filtered_df[filtered_df[key].astype(str).str.contains(str(value), case=False, na=False)]
+                    filtered_df = filtered_df[filtered_df[key].astype(str).str.contains(value, case=False, na=False)]
+
         except (json.JSONDecodeError, TypeError, KeyError) as e:
-            return json.dumps({"result": f"I had trouble parsing your request. Error: {e}"})
+            return json.dumps({"result": f"I had trouble understanding your request's structure. Error: {e}"})
 
         if filtered_df.empty:
             return json.dumps({"result": "No datasets found that match your specific criteria."})
@@ -161,13 +174,9 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
         data_as_dict = filtered_df.to_dict(orient='records')
         return json.dumps({"count": len(filtered_df), "data": data_as_dict})
 
-    # --- Tool 2: Category Summarizer (UPDATED) ---
+
+    # --- Tool 2: Category Summarizer ---
     def get_category_summary(user_query: str) -> str:
-        """
-        Uses an LLM to identify the correct category from the user's query,
-        generates a text summary, and returns a JSON string containing both
-        the summary and the identified category name.
-        """
         category_finder_prompt = PromptTemplate.from_template(
             """
             You are a classification assistant. Your task is to identify which single data category a user is asking about.
@@ -200,14 +209,12 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
             You are a data summarization expert. Based on the provided data, create a concise, one-paragraph summary.
             - From the list of diseases, identify and list the top 4 primary conditions, summarizing them cleanly.
             - From the list of modalities, identify and list the top 2 unique modalities, consolidating synonyms (e.g., 'ct' and 'CT' are the same).
-
             DATA:
             - Category Name: {category}
             - Total Datasets: {count}
             - Year Range: {min_year} - {max_year}
             - List of Diseases: {diseases}
             - List of Modalities: {modalities}
-
             Generate the summary in this exact format:
             "The {category} category contains {count} datasets. They primarily focus on conditions like [Top 4 summarized diseases], using modalities such as [Top 2 unique modalities], with data published between {min_year} and {max_year}."
             """
@@ -227,7 +234,6 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
 
     # --- Tool 3: Plotting Tool ---
     def create_chart(data_query: str, chart_type: str = 'bar') -> str:
-        """Generates a chart based on a pandas query. Does not save or show."""
         try:
             data_series = eval(data_query, {"combined_df": _combined_df, "pd": pd})
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -247,14 +253,13 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
                 plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
             else:
                 return f"Error: Unsupported chart type '{chart_type}'. Please use 'bar', 'line', or 'pie'."
-
+            
             plt.tight_layout()
             return f"Chart '{chart_type}' successfully generated for display."
         except Exception as e:
             return f"Error creating chart: {e}. The input must be a valid pandas command."
 
     def charting_wrapper(query_string: str) -> str:
-        """Wrapper for create_chart. Input: 'chart_type|pandas_query'."""
         try:
             parts = query_string.split('|', 1)
             if len(parts) != 2: return "Error: Invalid input format. Expected 'chart_type|pandas_query'."
@@ -264,15 +269,19 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
         except Exception as e:
             return f"An unexpected error occurred in the plotting wrapper: {e}"
 
-    # --- Tool Definitions (Tool 2 is UPDATED) ---
-    hybrid_finder_tool = Tool(name="hybrid_dataset_finder", func=hybrid_dataset_finder, description="Use this as the primary tool to find specific datasets based on criteria like category, disease, access type, modality, institution, country, format, segmentation_mask, etc. The input should be the user's full query.")
+    # --- Tool Definitions (Tool 1 is UPDATED) ---
+    hybrid_finder_tool = Tool(
+        name="hybrid_dataset_finder",
+        func=hybrid_dataset_finder,
+        description="Use this as the primary tool to find specific datasets based on criteria like category, disease, access type, modality, institution, country, format, segmentation_mask, etc. The input should be the user's full query."
+    )
     category_summary_tool = Tool(name="category_summarizer", func=get_category_summary, description="Use this tool ONLY when the user asks for a general overview, summary, or a full list of datasets for a broad category. The input to this tool should be the user's full, original query.")
     python_repl_tool = Tool(name="python_code_interpreter", func=PythonAstREPLTool(locals={"pd": pd, "combined_df": _combined_df}).run, description="CRITICAL: Use this tool for any questions that involve ranking, comparison, or calculation (e.g., 'most', 'least', 'highest', 'compare', 'how many'). This tool is for performing Python-based analysis on the 'combined_df' pandas DataFrame to answer a question. The input MUST be a valid Python command.")
     plotting_tool = Tool(name="chart_generator", func=charting_wrapper, description="Use this to create and display a chart from data. The input MUST be a single string separated by a pipe `|` in the format: 'chart_type|pandas_query'. Example: \"pie|combined_df['access_type'].value_counts()\"")
 
     tools = [hybrid_finder_tool, category_summary_tool, python_repl_tool, plotting_tool]
-
-    # --- Agent Prompt (IMPROVED) ---
+    
+    # --- Agent Prompt ---
     prompt_template = """
     You are NeuroAI, a helpful and friendly assistant for exploring neuroradiology datasets. Your goal is to answer user questions accurately by using the tools provided.
     You have access to the following tools: {tools}
@@ -325,25 +334,20 @@ def display_paginated_dataframe(df: pd.DataFrame, state_key: str, page_size: int
 
     current_page = st.session_state[state_key]
     total_pages = max(1, (len(df) - 1) // page_size + 1)
-
+    
     start_index = (current_page - 1) * page_size
     end_index = start_index + page_size
-
-    # Display the sliced dataframe
+    
     st.dataframe(df.iloc[start_index:end_index])
 
-    # --- Pagination Controls ---
     col1, col2, col3 = st.columns([2, 3, 2])
 
-    # 'Previous' button
     if col1.button("◀ Previous", key=f"prev_{state_key}", disabled=(current_page <= 1)):
         st.session_state[state_key] -= 1
         st.rerun()
 
-    # Page indicator
     col2.markdown(f"<p style='text-align: center;'>Page <b>{current_page}</b> of <b>{total_pages}</b></p>", unsafe_allow_html=True)
-
-    # 'Next' button
+    
     if col3.button("Next ▶", key=f"next_{state_key}", disabled=(current_page >= total_pages)):
         st.session_state[state_key] += 1
         st.rerun()
@@ -355,26 +359,19 @@ if "memory" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you explore the neuroradiology datasets today?"}]
 
-# Display chat messages from history
 for i, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        # If a message has a table, display it with pagination
         if "table" in msg and msg["table"] is not None:
             display_paginated_dataframe(msg["table"], state_key=f"page_{i}")
-        # If a message has a chart, display it
         if "chart" in msg and msg["chart"] is not None:
             st.pyplot(msg["chart"])
 
-# Handle user input
 if user_query := st.chat_input("Ask about datasets, request a summary, or ask for a plot..."):
-    # Append user message to history
     st.session_state.messages.append({"role": "user", "content": user_query})
-    # Display user message
     with st.chat_message("user"):
         st.markdown(user_query)
 
-    # Generate and display assistant response
     with st.chat_message("assistant"):
         with st.spinner("🧠 Thinking..."):
             try:
@@ -389,37 +386,32 @@ if user_query := st.chat_input("Ask about datasets, request a summary, or ask fo
                 table_to_display = None
                 chart_to_display = None
 
-                # Check for tool outputs to display
                 if 'intermediate_steps' in response and response['intermediate_steps']:
                     last_action, last_observation = response['intermediate_steps'][-1]
-
+                    
                     if last_action.tool in ['hybrid_dataset_finder', 'category_summarizer']:
                         tool_output = json.loads(last_observation)
-                        if 'data' in tool_output: # From hybrid_finder
+                        if 'data' in tool_output:
                             df = pd.DataFrame(tool_output['data'])
                             table_to_display = df[[col for col in ALL_DISPLAY_COLUMNS if col in df.columns]]
-                        elif 'category_name' in tool_output: # From summarizer
+                        elif 'category_name' in tool_output:
                             target_category = tool_output.get("category_name")
                             if target_category and target_category in dataframes:
                                 df = dataframes[target_category]
                                 table_to_display = df[[col for col in ALL_DISPLAY_COLUMNS if col in df.columns]]
-
+                    
                     elif last_action.tool == 'chart_generator' and "Error" not in last_observation:
                         chart_to_display = plt.gcf()
 
-                # Display the table with pagination if it exists
                 if table_to_display is not None and not table_to_display.empty:
-                    # Use the index of the upcoming message as the unique key
                     table_key = f"page_{len(st.session_state.messages)}"
                     display_paginated_dataframe(table_to_display, state_key=table_key)
                     assistant_message["table"] = table_to_display
 
-                # Display the chart if it exists
                 if chart_to_display is not None:
                     st.pyplot(chart_to_display)
                     assistant_message["chart"] = chart_to_display
-
-                # Save context to memory and history
+                
                 st.session_state.memory.save_context(inputs, {"output": final_answer})
                 st.session_state.messages.append(assistant_message)
 
@@ -427,5 +419,4 @@ if user_query := st.chat_input("Ask about datasets, request a summary, or ask fo
                 error_message = f"An unexpected error occurred: {e}"
                 st.error(error_message)
                 st.session_state.messages.append({"role": "assistant", "content": error_message, "table": None, "chart": None})
-                # We do a final rerun to ensure the error message is displayed and the input box is cleared
                 st.rerun()
