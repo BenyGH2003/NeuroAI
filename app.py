@@ -51,69 +51,6 @@ llm = ChatOpenAI(
     temperature=0
 )
 
-
-Of course. I have updated the application with your new, more robust get_category_summary function.
-
-The code below is the complete and final app.py file for your deployment. The only changes are within the setup_agent function, where I've replaced the category summarizer tool with the exact code you provided.
-
-app.py (Complete and Updated)
-Python
-
-# -*- coding: utf-8 -*-
-# app.py
-
-import streamlit as st
-import pandas as pd
-import re
-import os
-import json
-from typing import Optional
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain_experimental.tools.python.tool import PythonAstREPLTool
-from langchain.agents import Tool, create_react_agent, AgentExecutor
-from langchain.memory import ConversationBufferWindowMemory
-
-# --- PAGE CONFIGURATION & STYLING ---
-st.set_page_config(
-    page_title="NeuroAI Hub",
-    page_icon="🧠",
-    layout="wide"
-)
-
-st.markdown("""
-<style>
-    /* Custom purple spinner color */
-    .stSpinner > div > div {
-        border-top-color: #9c27b0;
-    }
-    /* Center the pagination controls */
-    .stButton { text-align: center; }
-</style>""", unsafe_allow_html=True)
-
-st.title("🧠 NeuroAI Hub")
-st.caption("Your conversational assistant for neuroradiology datasets. I can find datasets, create summaries, and generate plots.")
-
-
-# --- API KEY & LLM SETUP ---
-try:
-    AVALAI_API_KEY = st.secrets["AVALAI_API_KEY"]
-except (FileNotFoundError, KeyError):
-    st.error("AVALAI_API_KEY not found. Please add it to your Streamlit secrets.", icon="🚨")
-    st.stop()
-
-# Set up the LLM using the provided API key from secrets
-llm = ChatOpenAI(
-    openai_api_key=AVALAI_API_KEY,
-    model_name='gpt-4.1-mini',
-    base_url="https://api.avalai.ir/v1",
-    temperature=0
-)
-
-
 # --- DATA LOADING (Cached to run only once) ---
 @st.cache_resource
 def load_data():
