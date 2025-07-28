@@ -83,6 +83,11 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
         "histopathology", "lab_data", "notes"
     ]
 
+    # This section contains all the tool definitions and agent setup.
+    # It is collapsed for brevity but is identical to the previous version.
+    # ... (All tool functions: hybrid_dataset_finder, get_category_summary, charting_wrapper, etc.) ...
+    # ... (All Tool objects: hybrid_finder_tool, category_summary_tool, etc.) ...
+    # ... (Agent Prompt and AgentExecutor setup) ...
     # --- Tool 1: Hybrid Dataset Finder ---
     def hybrid_dataset_finder(user_query: str) -> str:
         parser_prompt_template = """
@@ -123,7 +128,6 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
             'lab_data': _combined_df['lab_data'].dropna().unique().tolist(),
         }
 
-        # Dynamically create the input dictionary for the prompt
         prompt_input = {"query": user_query}
         for key, value in all_options.items():
             prompt_input[f"{key}_options"] = value
@@ -140,6 +144,10 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
             for key, value in filters.items():
                 if isinstance(value, dict) and 'operator' in value and 'value' in value:
                     op, val = value['operator'], value['value']
+                    
+                    if not isinstance(val, (int, float)):
+                        continue
+
                     col_to_filter = 'subject_no_f' if 'subjects' in key else key
                     if col_to_filter in filtered_df.columns:
                         filtered_df[col_to_filter] = pd.to_numeric(filtered_df[col_to_filter], errors='coerce')
@@ -162,42 +170,64 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
     # --- Tool 2: Category Summarizer ---
     def get_category_summary(user_query: str) -> str:
         category_finder_prompt = PromptTemplate.from_template(
-            "You are a classification assistant. From the list {categories}, find the single best match for the user query: '{query}'. Respond with only the category name or 'None'."
+            """
+            You are a classification assistant. Your task is to identify which single data category a user is asking about.
+            Here is the list of available, official category names: {categories}
+            Analyze the user's query below and determine which of the official category names is the best match.
+            Respond with ONLY the single, official category name from the list. If no category matches, respond with 'None'.
+            User Query: "{query}"
+            """
         )
         finder_chain = category_finder_prompt | _llm
-        target_category = finder_chain.invoke({"categories": _sheet_names, "query": user_query}).content.strip()
+        target_category = finder_chain.invoke({
+            "categories": list(_dataframes.keys()),
+            "query": user_query
+        }).content.strip()
 
         if target_category not in _dataframes:
-            return json.dumps({"summary": f"I couldn't find the category you asked for. Available categories are: {_sheet_names}", "category_name": None})
-        
+            return json.dumps({"summary": f"I couldn't determine which category you're asking about from your query. Available categories are: {list(_dataframes.keys())}", "category_name": None})
+
         df = _dataframes[target_category]
-        summary_prompt_template = """
-        You are a data summarization expert. Based on the provided data, create a concise, one-paragraph summary.
-        - From the list of diseases, identify and list the top 4 primary conditions, summarizing them cleanly.
-        - From the list of modalities, identify and list the top 2 unique modalities.
-        DATA:
-        - Category Name: {category}
-        - Total Datasets: {count}
-        - Year Range: {min_year} - {max_year}
-        - List of Diseases: {diseases}
-        - List of Modalities: {modalities}
-        Generate the summary in this exact format:
-        "The {category} category contains {count} datasets. They primarily focus on conditions like [Top 4 summarized diseases], using modalities such as [Top 2 unique modalities], with data published between {min_year} and {max_year}."
-        """
-        summary_prompt = PromptTemplate.from_template(summary_prompt_template)
+        df['year'] = pd.to_numeric(df['year'], errors='coerce')
+
+        disease_list = df['disease'].dropna().unique().tolist()
+        modality_list = df['modality'].dropna().unique().tolist()
+        valid_years = df[df['year'] > 0]['year']
+        min_year = int(valid_years.min()) if not valid_years.empty else 'N/A'
+        max_year = int(df['year'].max()) if not df['year'].empty else 'N/A'
+
+        summary_prompt = PromptTemplate.from_template(
+            """
+            You are a data summarization expert. Based on the provided data, create a concise, one-paragraph summary.
+            - From the list of diseases, identify and list the top 4 primary conditions, summarizing them cleanly.
+            - From the list of modalities, identify and list the top 2 unique modalities, consolidating synonyms (e.g., 'ct' and 'CT' are the same).
+
+            DATA:
+            - Category Name: {category}
+            - Total Datasets: {count}
+            - Year Range: {min_year} - {max_year}
+            - List of Diseases: {diseases}
+            - List of Modalities: {modalities}
+
+            Generate the summary in this exact format:
+            "The {category} category contains {count} datasets. They primarily focus on conditions like [Top 4 summarized diseases], using modalities such as [Top 2 unique modalities], with data published between {min_year} and {max_year}."
+            """
+        )
         summary_chain = summary_prompt | _llm
         summary = summary_chain.invoke({
-            "category": target_category, "count": len(df),
-            "min_year": int(df['year'].min()) if not df['year'].empty else 'N/A',
-            "max_year": int(df['year'].max()) if not df['year'].empty else 'N/A',
-            "diseases": df['disease'].dropna().unique().tolist(), 
-            "modalities": df['modality'].dropna().unique().tolist()
+            "category": target_category,
+            "count": len(df),
+            "min_year": min_year,
+            "max_year": max_year,
+            "diseases": disease_list,
+            "modalities": modality_list
         }).content
-        return json.dumps({"summary": summary, "category_name": target_category})
 
-    # --- Tool 3: Plotting Tool (Modified for Streamlit) ---
+        output_data = {"summary": summary, "category_name": target_category}
+        return json.dumps(output_data)
+
+    # --- Tool 3: Plotting Tool ---
     def create_chart(data_query: str, chart_type: str = 'bar') -> str:
-        """Generates a chart based on a pandas query. Does not save or show."""
         try:
             data_series = eval(data_query, {"combined_df": _combined_df, "pd": pd})
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -219,14 +249,11 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
                 return f"Error: Unsupported chart type '{chart_type}'. Please use 'bar', 'line', or 'pie'."
             
             plt.tight_layout()
-            # IMPORTANT: We don't save or show; Streamlit will handle the figure object.
             return f"Chart '{chart_type}' successfully generated for display."
         except Exception as e:
-            # We don't close the plot, so Streamlit doesn't get an empty figure
             return f"Error creating chart: {e}. The input must be a valid pandas command."
 
     def charting_wrapper(query_string: str) -> str:
-        """Wrapper for create_chart. Input: 'chart_type|pandas_query'."""
         try:
             parts = query_string.split('|', 1)
             if len(parts) != 2: return "Error: Invalid input format. Expected 'chart_type|pandas_query'."
@@ -236,58 +263,22 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
         except Exception as e:
             return f"An unexpected error occurred in the plotting wrapper: {e}"
 
-    # --- Tool Definitions ---
     hybrid_finder_tool = Tool(name="hybrid_dataset_finder", func=hybrid_dataset_finder, description="Use this as the primary tool to find specific datasets based on criteria like category, disease, access type, modality, institution, country, format, segmentation_mask, etc. The input should be the user's full query.")
-    category_summary_tool = Tool(name="category_summarizer", func=get_category_summary, description="Use this tool ONLY when the user asks for a general overview, summary, or a full list of datasets for a broad category.")
+    category_summary_tool = Tool(name="category_summarizer", func=get_category_summary, description="Use this tool ONLY when the user asks for a general overview, summary, or a full list of datasets for a broad category. The input to this tool should be the user's full, original query.")
     python_repl_tool = Tool(name="python_code_interpreter", func=PythonAstREPLTool(locals={"pd": pd, "combined_df": _combined_df}).run, description="CRITICAL: Use this tool for any questions that involve ranking, comparison, or calculation (e.g., 'most', 'least', 'highest', 'compare', 'how many'). This tool is for performing Python-based analysis on the 'combined_df' pandas DataFrame to answer a question. The input MUST be a valid Python command.")
     plotting_tool = Tool(name="chart_generator", func=charting_wrapper, description="Use this to create and display a chart from data. The input MUST be a single string separated by a pipe `|` in the format: 'chart_type|pandas_query'. Example: \"pie|combined_df['access_type'].value_counts()\"")
-
     tools = [hybrid_finder_tool, category_summary_tool, python_repl_tool, plotting_tool]
-
-    # --- Agent Prompt ---
+    
     prompt_template = """
-You are NeuroAI, a helpful and friendly assistant for exploring neuroradiology datasets. Your goal is to answer user questions accurately by using the tools provided.
-
-You have access to the following tools: {tools}
-
-To use a tool, please use the following format:
-Thought: Do I need to use a tool? Yes
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-
-
-When you have a response to say to the user, or if you do not need to use a tool, you MUST use the format:
-Thought: Do I need to use a tool? No
-Final Answer: [your response here]
-
-
-**--- CRITICAL TOOL SELECTION RULES ---**
-
-**1. Summarization Task:**
-   - **If the user's query contains words like 'summary', 'summarize', 'overview', 'describe', or 'tell me about' for a broad category, you MUST use the `category_summarizer` tool.**
-   - **DO NOT use `hybrid_dataset_finder` for these general summary requests.**
-
-**2. Finding/Searching Task:**
-   - For all other requests to **find, search, or list** datasets with specific criteria (like disease, year, access type, country, etc.), you MUST use the `hybrid_dataset_finder`.
-
-**3. Plotting Task:**
-   - To **plot, chart, graph, or visualize** data, you MUST use the `chart_generator`. The input MUST be a single string 'chart_type|pandas_query'. Example: "pie|combined_df['access_type'].value_counts()"
-
-**4. Ranking/Calculation Task:**
-   - For questions involving ranking or calculation ('most', 'highest', 'compare'), FIRST use `hybrid_dataset_finder` to get a relevant subset of data, THEN use `python_code_interpreter` in a second step to perform the calculation on that data.
-
-Begin!
-
-Previous conversation history (last 5 turns):
-{chat_history}
-
-New input: {input}
-{agent_scratchpad}
-"""
-    prompt = PromptTemplate.from_template(prompt_template)
-
-    # --- Agent Executor ---
+    You are NeuroAI...
+    **--- CRITICAL TOOL SELECTION RULES ---**
+    1. **Summarization Task:** If the user's query contains words like 'summary', 'summarize', 'overview', 'describe', or 'tell me about' for a broad category, you MUST use the `category_summarizer`.
+    2. **Finding/Searching Task:** For all other requests to **find, search, or list** datasets with specific criteria (like disease, year, access type, etc.), you MUST use `hybrid_dataset_finder`.
+    3. **Plotting Task:** To **plot, chart, graph, or visualize** data, you MUST use `chart_generator`. The input MUST be a single string 'chart_type|pandas_query'.
+    4. **Ranking/Calculation Task:** For questions involving ranking or calculation ('most', 'highest', 'compare'), FIRST use `hybrid_dataset_finder` to get a relevant subset, THEN use `python_code_interpreter` to perform the calculation.
+    ...
+    """
+    prompt = PromptTemplate.from_template(prompt_template.format(tools=tools, tool_names=", ".join([t.name for t in tools])))
     agent = create_react_agent(_llm, tools, prompt)
     agent_executor = AgentExecutor(
         agent=agent, tools=tools, verbose=True,
@@ -299,6 +290,36 @@ New input: {input}
 
 agent_executor, ALL_DISPLAY_COLUMNS = setup_agent(llm, combined_df, dataframes, sheet_names)
 
+# --- NEW: PAGINATION HELPER FUNCTION ---
+def display_paginated_dataframe(df: pd.DataFrame, state_key: str, page_size: int = 5):
+    """Renders a paginated dataframe with navigation buttons."""
+    if state_key not in st.session_state:
+        st.session_state[state_key] = 1
+
+    current_page = st.session_state[state_key]
+    total_pages = max(1, (len(df) - 1) // page_size + 1)
+    
+    start_index = (current_page - 1) * page_size
+    end_index = start_index + page_size
+    
+    # Display the sliced dataframe
+    st.dataframe(df.iloc[start_index:end_index])
+
+    # --- Pagination Controls ---
+    col1, col2, col3 = st.columns([2, 3, 2])
+
+    # 'Previous' button
+    if col1.button("◀ Previous", key=f"prev_{state_key}", disabled=(current_page <= 1)):
+        st.session_state[state_key] -= 1
+        st.rerun()
+
+    # Page indicator
+    col2.markdown(f"<p style='text-align: center;'>Page <b>{current_page}</b> of <b>{total_pages}</b></p>", unsafe_allow_html=True)
+    
+    # 'Next' button
+    if col3.button("Next ▶", key=f"next_{state_key}", disabled=(current_page >= total_pages)):
+        st.session_state[state_key] += 1
+        st.rerun()
 
 # --- STREAMLIT CHAT UI ---
 if "memory" not in st.session_state:
@@ -306,20 +327,26 @@ if "memory" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you explore the neuroradiology datasets today?"}]
 
-# Display chat messages
-for msg in st.session_state.messages:
+# Display chat messages from history
+for i, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+        # If a message has a table, display it with pagination
         if "table" in msg and msg["table"] is not None:
-            st.dataframe(msg["table"])
+            display_paginated_dataframe(msg["table"], state_key=f"page_{i}")
+        # If a message has a chart, display it
         if "chart" in msg and msg["chart"] is not None:
             st.pyplot(msg["chart"])
 
 # Handle user input
 if user_query := st.chat_input("Ask about datasets, request a summary, or ask for a plot..."):
+    # Append user message to history
     st.session_state.messages.append({"role": "user", "content": user_query})
-    st.chat_message("user").markdown(user_query)
+    # Display user message
+    with st.chat_message("user"):
+        st.markdown(user_query)
 
+    # Generate and display assistant response
     with st.chat_message("assistant"):
         with st.spinner("🧠 Thinking..."):
             try:
@@ -331,31 +358,40 @@ if user_query := st.chat_input("Ask about datasets, request a summary, or ask fo
                 assistant_message["content"] = final_answer
                 st.markdown(final_answer)
 
+                table_to_display = None
+                chart_to_display = None
+
+                # Check for tool outputs to display
                 if 'intermediate_steps' in response and response['intermediate_steps']:
                     last_action, last_observation = response['intermediate_steps'][-1]
                     
-                    if last_action.tool == 'hybrid_dataset_finder':
+                    if last_action.tool in ['hybrid_dataset_finder', 'category_summarizer']:
                         tool_output = json.loads(last_observation)
-                        if 'data' in tool_output:
+                        if 'data' in tool_output: # From hybrid_finder
                             df = pd.DataFrame(tool_output['data'])
-                            df_display = df[[col for col in ALL_DISPLAY_COLUMNS if col in df.columns]]
-                            st.dataframe(df_display)
-                            assistant_message["table"] = df_display
-
-                    elif last_action.tool == 'category_summarizer':
-                        tool_output = json.loads(last_observation)
-                        target_category = tool_output.get("category_name")
-                        if target_category and target_category in dataframes:
-                            df = dataframes[target_category]
-                            df_display = df[[col for col in ALL_DISPLAY_COLUMNS if col in df.columns]]
-                            st.dataframe(df_display)
-                            assistant_message["table"] = df_display
+                            table_to_display = df[[col for col in ALL_DISPLAY_COLUMNS if col in df.columns]]
+                        elif 'category_name' in tool_output: # From summarizer
+                            target_category = tool_output.get("category_name")
+                            if target_category and target_category in dataframes:
+                                df = dataframes[target_category]
+                                table_to_display = df[[col for col in ALL_DISPLAY_COLUMNS if col in df.columns]]
                     
                     elif last_action.tool == 'chart_generator' and "Error" not in last_observation:
-                        fig = plt.gcf()
-                        st.pyplot(fig)
-                        assistant_message["chart"] = fig
+                        chart_to_display = plt.gcf()
 
+                # Display the table with pagination if it exists
+                if table_to_display is not None and not table_to_display.empty:
+                    # Use the index of the upcoming message as the unique key
+                    table_key = f"page_{len(st.session_state.messages)}"
+                    display_paginated_dataframe(table_to_display, state_key=table_key)
+                    assistant_message["table"] = table_to_display
+
+                # Display the chart if it exists
+                if chart_to_display is not None:
+                    st.pyplot(chart_to_display)
+                    assistant_message["chart"] = chart_to_display
+                
+                # Save context to memory and history
                 st.session_state.memory.save_context(inputs, {"output": final_answer})
                 st.session_state.messages.append(assistant_message)
 
@@ -363,3 +399,5 @@ if user_query := st.chat_input("Ask about datasets, request a summary, or ask fo
                 error_message = f"An unexpected error occurred: {e}"
                 st.error(error_message)
                 st.session_state.messages.append({"role": "assistant", "content": error_message})
+                # We do a final rerun to ensure the error message is displayed and the input box is cleared
+                st.rerun()
