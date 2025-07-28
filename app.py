@@ -245,15 +245,12 @@ def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
 
             if chart_type == 'bar':
                 sns.barplot(x=data_series.index, y=data_series.values, palette="viridis", ax=ax)
-                ax.set_title(f'Bar Chart: {data_query}', fontsize=14)
                 plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
             elif chart_type == 'pie':
                 ax.pie(data_series.values, labels=data_series.index, autopct='%1.1f%%', startangle=140)
-                ax.set_title(f'Pie Chart: {data_query}', fontsize=14)
                 ax.set_ylabel('')
             elif chart_type == 'line':
                 sns.lineplot(x=data_series.index, y=data_series.values, marker='o', ax=ax)
-                ax.set_title(f'Line Chart: {data_query}', fontsize=14)
                 plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
             else:
                 return f"Error: Unsupported chart type '{chart_type}'. Please use 'bar', 'line', or 'pie'."
@@ -342,7 +339,7 @@ def display_paginated_dataframe(df: pd.DataFrame, state_key: str, page_size: int
     start_index = (current_page - 1) * page_size
     end_index = start_index + page_size
     
-    st.dataframe(df.iloc[start_index:end_index])
+    st.dataframe(df.iloc[start_index:end_index], hide_index=True)
 
     col1, col2, col3 = st.columns([2, 3, 2])
 
