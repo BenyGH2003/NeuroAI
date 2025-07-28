@@ -8,3 +8,4 @@ langchain-community
 tabulate
 pydantic
 matplotlib
+seaborn
