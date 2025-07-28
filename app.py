@@ -329,7 +329,7 @@ agent_executor, ALL_DISPLAY_COLUMNS = setup_agent(llm, combined_df, dataframes, 
 
 # --- PAGINATION HELPER FUNCTION ---
 def display_paginated_dataframe(df: pd.DataFrame, state_key: str, page_size: int = 5):
-    """Renders a paginated dataframe with navigation buttons, with a scrollable 'notes' column."""
+    """Renders a paginated dataframe with navigation buttons."""
     if state_key not in st.session_state:
         st.session_state[state_key] = 1
 
@@ -339,18 +339,8 @@ def display_paginated_dataframe(df: pd.DataFrame, state_key: str, page_size: int
     start_index = (current_page - 1) * page_size
     end_index = start_index + page_size
     
-    df_to_display = df.iloc[start_index:end_index]
-    
-    # Display other columns in a normal table view
-    st.dataframe(df_to_display.drop(columns=["notes"]), hide_index=True)
+    st.dataframe(df.iloc[start_index:end_index], hide_index=True)
 
-    # Create a separate scrollable container for the 'notes' column
-    notes_column = df_to_display["notes"]
-    st.markdown("### Notes", unsafe_allow_html=True)
-    with st.beta_container():
-        st.text_area("Notes", value="\n".join(notes_column), height=300)
-    
-    # Pagination controls
     col1, col2, col3 = st.columns([2, 3, 2])
 
     if col1.button("◀ Previous", key=f"prev_{state_key}", disabled=(current_page <= 1)):
