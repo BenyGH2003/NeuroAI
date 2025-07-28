@@ -285,7 +285,7 @@ Previous conversation history (last 5 turns):
 New input: {input}
 {agent_scratchpad}
 """
-prompt = PromptTemplate.from_template(prompt_template)
+    prompt = PromptTemplate.from_template(prompt_template)
 
     # --- Agent Executor ---
     agent = create_react_agent(_llm, tools, prompt)
