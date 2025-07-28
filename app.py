@@ -1,297 +1,354 @@
 # -*- coding: utf-8 -*-
-"""NeuroAIHub_Streamlit_App_No_Update.py
-
-A Streamlit web app for the NeuroAIHub agent, allowing users to explore neuroradiology datasets through a conversational interface.
-Supports open-ended queries and displays datasets in tabulated format. Uses an existing database without updating.
-"""
+# app.py
 
 import streamlit as st
 import pandas as pd
-import os
-from typing import TypedDict, Optional
-import json
-from tabulate import tabulate
+import re
 from dotenv import load_dotenv
-from openai import OpenAI
+import os
+import json
+from typing import Optional
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-# Load environment variables
-load_dotenv() 
- 
-# Access the API key from environment variables (GitHub Secrets in production)
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
- 
-# Check if the API key is loaded correctly
-if not OPENAI_API_KEY:
-    st.error("API key not found. Please make sure your GitHub Secrets are configured properly.")
+from langchain.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain_experimental.tools.python.tool import PythonAstREPLTool
+from langchain.agents import Tool, create_react_agent, AgentExecutor
+from langchain.memory import ConversationBufferWindowMemory
 
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENAI_API_KEY  # Use the API key from the environment variable
+# --- PAGE CONFIGURATION & STYLING ---
+st.set_page_config(
+    page_title="NeuroAI Hub",
+    page_icon="🧠",
+    layout="wide"
 )
 
-# Define the dataset state structure
-class DatasetState(TypedDict):
-    paper_text: str
-    dataset_name: Optional[str]
-    doi: Optional[str]
-    url: Optional[str]
-    year: Optional[str]
-    access_type: Optional[str]
-    institution: Optional[str]
-    country: Optional[str]
-    modality: Optional[str]
-    resolution: Optional[str]
-    subject_no_f: Optional[str]
-    slice_scan_no: Optional[str]
-    age_range: Optional[str]
-    acquisition_protocol: Optional[str]
-    format: Optional[str]
-    segmentation_mask: Optional[str]
-    preprocessing: Optional[str]
-    disease: Optional[str]
-    healthy_control: Optional[str]
-    staging_information: Optional[str]
-    clinical_data_score: Optional[str]
-    histopathology: Optional[str]
-    lab_data: Optional[str]
+st.markdown("""
+<style>
+    /* Custom purple spinner color */
+    .stSpinner > div > div {
+        border-top-color: #9c27b0;
+    }
+</style>""", unsafe_allow_html=True)
 
-# General-purpose query processing prompt
-QUERY_PROMPT = """
-You are NeuroAIHub, a friendly and expert assistant for exploring a neuroradiology database. Your goal is to provide clear, accurate, and engaging answers to user queries, grounded in the database's structure, while avoiding assumptions or fabricated details. The database contains categorized datasets with the following structure:
+st.title("🧠 NeuroAI Hub")
+st.caption("Your conversational assistant for neuroradiology datasets. I can find datasets, create summaries, and generate plots.")
 
-- Categories: Neurodegenerative, Neoplasm, Cerebrovascular, Psychiatric, Spinal, Neurodevelopmental
-- Columns: dataset_name, doi, url, year, access_type, institution, country, modality, resolution, subject_no_f (e.g., "80(30)"), slice_scan_no, age_range, acquisition_protocol, format, segmentation_mask, preprocessing, disease, healthy_control, staging_information, clinical_data_score, histopathology, lab_data
 
-Disease-to-category mapping:
-- Neoplasm: brain tumor, glioma, glioblastoma, astrocytoma, meningioma, tumor, malignancy, metastasis, metastatic disease
-- Neurodegenerative: Alzheimer's, Parkinson's, Multiple Sclerosis
-- Cerebrovascular: stroke, aneurysm
-- Psychiatric: schizophrenia, ADHD, depression
-- Spinal: scoliosis, herniated disc, spinal tumor, metastatic spine disease, spinal malignancy, spinal metastasis
-- Neurodevelopmental: autism, ADHD
+# --- API KEY & LLM SETUP ---
+load_dotenv()
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+if not OPENAI_API_KEY:
+    st.warning("⚠️ API key not found. Please set OPENAI_API_KEY in Streamlit secrets or environment.")
+    st.stop()
 
-MRI modality clarification:
-- The "modality" column may include specific MRI sequences: T1, T1ce (T1 contrast-enhanced), T1w (T1-weighted), T2, T2w (T2-weighted), FLAIR, DWI. Treat these as subtypes of MRI when users query for "MRI" or "MRI scans."
-- Example: If the user asks for "MRI datasets," include datasets with T1, T1ce, T1w, T2, T2w, FLAIR, or DWI in the modality column.
+# Set up the LLM using the provided API key from secrets
+llm = ChatOpenAI(
+    openai_api_key=AVALAI_API_KEY,
+    model_name='gpt-4.1-mini',
+    base_url="https://api.avalai.ir/v1",
+    temperature=0
+)
 
-Query: {user_query}
 
-Instructions:
-- Provide a warm, concise, natural language response rooted in the database's structure and categories.
-- Do not invent dataset names, numbers, or details.
-- Recognize synonyms like "tumor," "malignancy," "metastasis," and "metastatic disease" as equivalent to specific diseases (e.g., "spinal tumor" includes "metastatic spine disease") and map to the appropriate category (e.g., Spinal or Neoplasm).
-- For dataset queries (e.g., "find spinal tumor datasets"), generate filter conditions (e.g., [{"column": "disease", "value": "spinal tumor|metastatic spine disease|spinal malignancy|spinal metastasis"}, {"column": "category", "value": "Spinal"}]) and include a general explanation of retrieved datasets.
-- For specific sequence queries (e.g., "find glioma datasets with FLAIR"), filter by the exact sequence in the modality column.
-- For dataset-specific queries (e.g., "what’s the DOI for ADNI?"), filter by "dataset_name" and describe key details (e.g., modality, disease).
-- For column value queries (e.g., "what’s the modality of BraTS?"), filter by dataset_name and return the specific column value with context.
-- For comparison queries (e.g., "compare ADNI and BraTS patient numbers"), note that direct comparison requires database access but suggest filters and describe typical attributes.
-- For descriptive queries (e.g., "tell me about brain tumors"), provide a category/column-based overview with a friendly tone.
-- For unclear queries, gently ask for clarification with 1-3 relevant follow-up suggestions.
-- Always return a JSON object:
-  {
-    "response": "friendly natural language response",
-    "filters": [{"column": "column_name", "value": "filter_value"}] or [],
-    "follow_up_suggestions": ["suggestion 1", "suggestion 2"],
-    "dataset_explanation": "general description of retrieved datasets" or ""
-  }
-- If no dataset matches, state: "I couldn’t find specific datasets for this query, but I can filter the database with these conditions to explore further."
-- Ensure filters are accurate, using regex-style patterns (e.g., "T1|T1ce", "spinal tumor|metastatic spine disease") for synonyms and multi-condition queries.
+# --- DATA LOADING (Cached to run only once) ---
+@st.cache_resource
+def load_data():
+    """Loads and prepares data from the Excel file."""
+    file_path = 'neuroradiology_datasets_S_L.xlsx'
+    if not os.path.exists(file_path):
+        st.error(f"FATAL: The data file '{file_path}' was not found. Please make sure it's in your repository.", icon="️⚠️")
+        st.stop()
 
-Examples:
-- Query: "Is there any spinal tumor dataset?"
-  {
-    "response": "I’m happy to help you find datasets for spinal tumors in the Spinal category!",
-    "filters": [{"column": "disease", "value": "spinal tumor|metastatic spine disease|spinal malignancy|spinal metastasis"}, {"column": "category", "value": "Spinal"}],
-    "follow_up_suggestions": ["Want to filter by MRI sequences like T1?", "Interested in datasets with clinical data?"],
-    "dataset_explanation": "These datasets cover spinal tumors, including metastatic spine diseases, often with MRI or CT scans, subject demographics, and clinical details."
-  }
+    xls = pd.ExcelFile(file_path)
+    sheet_names = xls.sheet_names
+    dataframes = {sheet: pd.read_excel(xls, sheet_name=sheet).assign(category=sheet) for sheet in sheet_names}
+    combined_df = pd.concat(dataframes.values(), ignore_index=True)
+    
+    return dataframes, combined_df, sheet_names
 
-- Query: "Find glioma datasets with MRI scans"
-  {
-    "response": "Let’s find glioma datasets with MRI scans in the Neoplasm category for you!",
-    "filters": [{"column": "disease", "value": "glioma|tumor|malignancy|metastasis"}, {"column": "modality", "value": "T1|T1ce|T1w|T2|T2w|FLAIR|DWI"}, {"column": "category", "value": "Neoplasm"}],
-    "follow_up_suggestions": ["Want to filter by specific sequences like FLAIR?", "Curious about subject counts?"],
-    "dataset_explanation": "These datasets use MRI sequences like T1, T2, or FLAIR to study gliomas or related malignancies, including details on subjects and protocols."
-  }
+dataframes, combined_df, sheet_names = load_data()
 
-- Query: "What’s the modality of BraTS?"
-  {
-    "response": "Let’s check the modality for the BraTS dataset!",
-    "filters": [{"column": "dataset_name", "value": "BraTS"}],
-    "follow_up_suggestions": ["Want to know BraTS subject counts?", "Interested in other glioma datasets?"],
-    "dataset_explanation": "BraTS typically includes MRI sequences like T1ce, T2, and FLAIR for glioma and malignancy studies."
-  }
 
-- Query: "Compare ADNI and BraTS patient numbers"
-  {
-    "response": "I’d love to compare ADNI and BraTS, but I need database access for exact numbers. Let’s filter these datasets instead!",
-    "filters": [{"column": "dataset_name", "value": "ADNI"}, {"column": "dataset_name", "value": "BraTS"}],
-    "follow_up_suggestions": ["Want to see subject counts?", "Curious about their modalities?"],
-    "dataset_explanation": "ADNI (Alzheimer’s) uses MRI like T1 for longitudinal studies, while BraTS (gliomas/malignancies) uses T1ce and FLAIR for tumor imaging."
-  }
+# --- AGENT AND TOOLS SETUP (Cached to run only once) ---
+@st.cache_resource
+def setup_agent(_llm, _combined_df, _dataframes, _sheet_names):
+    """Defines all tools and initializes the LangChain agent."""
 
-- Query: "Tell me about brain tumors"
-  {
-    "response": "Brain tumors are fascinating! They’re in the Neoplasm category, covering gliomas, malignancies, and more.",
-    "filters": [],
-    "follow_up_suggestions": ["Want to explore glioma datasets with MRI?", "Curious about metastatic tumor studies?"],
-    "dataset_explanation": ""
-  }
+    ALL_DISPLAY_COLUMNS = [
+        "dataset_name", "category", "doi", "url", "year", "access_type", "institution", "country",
+        "modality", "resolution", "subject_no_f", "slice_scan_no", "age_range", "disease",
+        "segmentation_mask", "healthy_control", "staging_information", "clinical_data_score",
+        "histopathology", "lab_data", "notes"
+    ]
 
-Note: For unmapped diseases, filter "disease" across all categories unless specified. Use regex-style filters (e.g., "T1|T1ce", "spinal tumor|metastatic spine disease") for MRI subtypes and disease synonyms. Keep responses engaging, accurate, and inclusive of synonym mappings.
-"""
+    # --- Tool 1: Hybrid Dataset Finder ---
+    def hybrid_dataset_finder(user_query: str) -> str:
+        parser_prompt_template = """
+        You are an expert query parser. Your job is to deconstruct the user's query and map it to a structured JSON filter based on the available options.
+        User Query: "{query}"
+        Available options for filtering:
+        - category: {category_options}
+        - disease: {disease_options}
+        - access_type: {access_type_options}
+        - modality: {modality_options}
+        - segmentation_mask: {segmentation_mask_options}
+        - institution: {institution_options}
+        - country: {country_options}
+        - format: {format_options}
+        - healthy_control: {healthy_control_options}
+        - staging_information: {staging_information_options}
+        - clinical_data_score: {clinical_data_score_options}
+        - histopathology: {histopathology_options}
+        - lab_data: {lab_data_options}
+        Analyze the user's query and translate it into a JSON object with a 'filters' key. For numerical fields like 'year' or 'subject_no_f', create a sub-object with 'operator' (e.g., '>', '<=', '==') and 'value'. If a filter is not mentioned, omit it. Respond with ONLY the JSON object.
+        """
+        parser_prompt = PromptTemplate.from_template(parser_prompt_template)
+        parser_chain = parser_prompt | _llm
+        
+        all_options = {
+            'category': _sheet_names,
+            'disease': _combined_df['disease'].dropna().unique().tolist(),
+            'access_type': _combined_df['access_type'].dropna().unique().tolist(),
+            'modality': _combined_df['modality'].dropna().unique().tolist(),
+            'segmentation_mask': _combined_df['segmentation_mask'].dropna().unique().tolist(),
+            'institution': _combined_df['institution'].dropna().unique().tolist(),
+            'country': _combined_df['country'].dropna().unique().tolist(),
+            'format': _combined_df['format'].dropna().unique().tolist(),
+            'healthy_control': _combined_df['healthy_control'].dropna().unique().tolist(),
+            'staging_information': _combined_df['staging_information'].dropna().unique().tolist(),
+            'clinical_data_score': _combined_df['clinical_data_score'].dropna().unique().tolist(),
+            'histopathology': _combined_df['histopathology'].dropna().unique().tolist(),
+            'lab_data': _combined_df['lab_data'].dropna().unique().tolist(),
+        }
 
-def apply_filters(df: pd.DataFrame, filters: list, category: str = None) -> pd.DataFrame:
-    filtered_df = df
-    for f in filters:
-        column = f["column"]
-        value = f["value"]
-        if column == "category":
-            continue  # Category is handled at the DataFrame selection level
-        if column in df.columns:
-            filtered_df = filtered_df[filtered_df[column].str.contains(value, case=False, na=False)]
-    return filtered_df
+        # Dynamically create the input dictionary for the prompt
+        prompt_input = {"query": user_query}
+        for key, value in all_options.items():
+            prompt_input[f"{key}_options"] = value
 
-def process_query(query: str, excel_book: dict, categories: list) -> dict:
-    prompt = QUERY_PROMPT.replace("{user_query}", query)
-    try:
-        response = client.chat.completions.create(
-            model="deepseek/deepseek-r1-distill-llama-70b:free",
-            messages=[
-                {"role": "system", "content": "You are a precise JSON-generating assistant. Always return a valid JSON object."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0,
-            max_tokens=1000
+        filter_json_str = parser_chain.invoke(prompt_input).content
+        
+        filtered_df = _combined_df.copy()
+        try:
+            clean_json_str = re.sub(r"```json\n?|```", "", filter_json_str).strip()
+            filters = json.loads(clean_json_str).get("filters", {})
+            if not filters:
+                return json.dumps({"result": "I couldn't identify any specific search criteria."})
+
+            for key, value in filters.items():
+                if isinstance(value, dict) and 'operator' in value and 'value' in value:
+                    op, val = value['operator'], value['value']
+                    col_to_filter = 'subject_no_f' if 'subjects' in key else key
+                    if col_to_filter in filtered_df.columns:
+                        filtered_df[col_to_filter] = pd.to_numeric(filtered_df[col_to_filter], errors='coerce')
+                        if op == '>': filtered_df = filtered_df[filtered_df[col_to_filter] > val]
+                        elif op == '>=': filtered_df = filtered_df[filtered_df[col_to_filter] >= val]
+                        elif op == '<': filtered_df = filtered_df[filtered_df[col_to_filter] < val]
+                        elif op == '<=': filtered_df = filtered_df[filtered_df[col_to_filter] <= val]
+                        elif op == '==': filtered_df = filtered_df[filtered_df[col_to_filter] == val]
+                elif key in filtered_df.columns:
+                    filtered_df = filtered_df[filtered_df[key].astype(str).str.contains(str(value), case=False, na=False)]
+        except (json.JSONDecodeError, TypeError, KeyError) as e:
+            return json.dumps({"result": f"I had trouble parsing your request. Error: {e}"})
+
+        if filtered_df.empty:
+            return json.dumps({"result": "No datasets found that match your specific criteria."})
+
+        data_as_dict = filtered_df.to_dict(orient='records')
+        return json.dumps({"count": len(filtered_df), "data": data_as_dict})
+
+    # --- Tool 2: Category Summarizer ---
+    def get_category_summary(user_query: str) -> str:
+        category_finder_prompt = PromptTemplate.from_template(
+            "You are a classification assistant. From the list {categories}, find the single best match for the user query: '{query}'. Respond with only the category name or 'None'."
         )
-        result = response.choices[0].message.content.strip()
-        result = result.replace("```json", "").replace("```", "").strip()
-        parsed_result = json.loads(result)
-        return parsed_result
-    except json.JSONDecodeError as e:
-        st.error(f"JSON Decode Error: {str(e)}")
-        st.error(f"Raw API Response: {response.choices[0].message.content}")
-        return {
-            "response": "I didn't quite understand your request. Could you clarify what you're looking for?",
-            "filters": [],
-            "follow_up_suggestions": ["Are you interested in a specific category like Neoplasm?", "Do you want to search for datasets?"],
-            "dataset_explanation": ""
-        }
-    except Exception as e:
-        st.error(f"Query processing failed: {str(e)}")
-        return {
-            "response": "Something went wrong. Could you try again or clarify your request?",
-            "filters": [],
-            "follow_up_suggestions": ["Try asking about a category or dataset feature."],
-            "dataset_explanation": ""
-        }
+        finder_chain = category_finder_prompt | _llm
+        target_category = finder_chain.invoke({"categories": _sheet_names, "query": user_query}).content.strip()
 
-def format_response(response: str, df: pd.DataFrame = None, follow_up_suggestions: list = [], dataset_explanation: str = "") -> str:
-    output = f"{response}\n"
-    if dataset_explanation:
-        output += f"\n{dataset_explanation}\n"
-    if df is not None and not df.empty:
-        column_map = {
-            'dataset_name': 'Name',
-            'doi': 'DOI',
-            'url': 'URL',
-            'year': 'Year',
-            'access_type': 'Access',
-            'institution': 'Institution',
-            'country': 'Country',
-            'modality': 'Modality',
-            'resolution': 'Resolution',
-            'subject_no_f': 'Subjects (F)',
-            'slice_scan_no': 'Slices/Scans',
-            'age_range': 'Age Range',
-            'acquisition_protocol': 'Protocol',
-            'format': 'Format',
-            'segmentation_mask': 'Segmentation',
-            'preprocessing': 'Preprocessing',
-            'disease': 'Disease',
-            'healthy_control': 'Healthy?',
-            'staging_information': 'Staging',
-            'clinical_data_score': 'Clinical Data',
-            'histopathology': 'Histopath?',
-            'lab_data': 'Lab Data?'
-        }
-        relevant_columns = list(column_map.keys())
-        display_df = df[relevant_columns].rename(columns=column_map)
-        output += "\n**Appendix: Dataset Details**\n"
-        output += f"```\n{tabulate(display_df, headers='keys', tablefmt='fancy_grid', showindex=False)}\n```\n"
-    if follow_up_suggestions:
-        output += "\n**What else can I help with?**\n"
-        for i, suggestion in enumerate(follow_up_suggestions, 1):
-            output += f"- {suggestion}\n"
-    return output
+        if target_category not in _dataframes:
+            return json.dumps({"summary": f"I couldn't find the category you asked for. Available categories are: {_sheet_names}", "category_name": None})
+        
+        df = _dataframes[target_category]
+        summary_prompt_template = """
+        You are a data summarization expert. Based on the provided data, create a concise, one-paragraph summary.
+        - From the list of diseases, identify and list the top 4 primary conditions, summarizing them cleanly.
+        - From the list of modalities, identify and list the top 2 unique modalities.
+        DATA:
+        - Category Name: {category}
+        - Total Datasets: {count}
+        - Year Range: {min_year} - {max_year}
+        - List of Diseases: {diseases}
+        - List of Modalities: {modalities}
+        Generate the summary in this exact format:
+        "The {category} category contains {count} datasets. They primarily focus on conditions like [Top 4 summarized diseases], using modalities such as [Top 2 unique modalities], with data published between {min_year} and {max_year}."
+        """
+        summary_prompt = PromptTemplate.from_template(summary_prompt_template)
+        summary_chain = summary_prompt | _llm
+        summary = summary_chain.invoke({
+            "category": target_category, "count": len(df),
+            "min_year": int(df['year'].min()) if not df['year'].empty else 'N/A',
+            "max_year": int(df['year'].max()) if not df['year'].empty else 'N/A',
+            "diseases": df['disease'].dropna().unique().tolist(), 
+            "modalities": df['modality'].dropna().unique().tolist()
+        }).content
+        return json.dumps({"summary": summary, "category_name": target_category})
 
-# Streamlit App
-def main():
-    st.title("NeuroAIHub: Neuroradiology Imaging Dataset Finder")
-    st.markdown("Explore a rich database of neuroradiology datasets. Ask anything about categories, datasets, or trends!")
+    # --- Tool 3: Plotting Tool (Modified for Streamlit) ---
+    def create_chart(data_query: str, chart_type: str = 'bar') -> str:
+        """Generates a chart based on a pandas query. Does not save or show."""
+        try:
+            data_series = eval(data_query, {"combined_df": _combined_df, "pd": pd})
+            fig, ax = plt.subplots(figsize=(10, 6))
+            chart_type = chart_type.lower().strip()
 
-    # Remove the sidebar update controls section
-    # Sidebar is no longer needed
-    # with st.sidebar:
-    #     st.header("Database Controls")
-    categories = ['Neurodegenerative', 'Neoplasm', 'Cerebrovascular', 'Psychiatric', 'Spinal', 'Neurodevelopmental']
-    #     selected_category = st.selectbox("Select Category to Update", categories)
-    #     if st.button("Update Database"):
-    #         with st.spinner(f"Updating the {selected_category} Database..."):
-    #             # Database update code removed...
+            if chart_type == 'bar':
+                sns.barplot(x=data_series.index, y=data_series.values, palette="viridis", ax=ax)
+                ax.set_title(f'Bar Chart: {data_query}', fontsize=14)
+                plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+            elif chart_type == 'pie':
+                ax.pie(data_series.values, labels=data_series.index, autopct='%1.1f%%', startangle=140)
+                ax.set_title(f'Pie Chart: {data_query}', fontsize=14)
+                ax.set_ylabel('')
+            elif chart_type == 'line':
+                sns.lineplot(x=data_series.index, y=data_series.values, marker='o', ax=ax)
+                ax.set_title(f'Line Chart: {data_query}', fontsize=14)
+                plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+            else:
+                return f"Error: Unsupported chart type '{chart_type}'. Please use 'bar', 'line', or 'pie'."
+            
+            plt.tight_layout()
+            # IMPORTANT: We don't save or show; Streamlit will handle the figure object.
+            return f"Chart '{chart_type}' successfully generated for display."
+        except Exception as e:
+            # We don't close the plot, so Streamlit doesn't get an empty figure
+            return f"Error creating chart: {e}. The input must be a valid pandas command."
 
-    # Load the dataset
-    dataset_file = 'dataset.xlsx'
-    if 'excel_book' not in st.session_state:
-        if os.path.exists(dataset_file):
-            st.session_state['excel_book'] = pd.read_excel(dataset_file, sheet_name=None)
-        else:
-            st.session_state['excel_book'] = {cat: pd.DataFrame(columns=[ 
-                "dataset_name", "doi", "url", "year", "access_type", "institution", "country",
-                "modality", "resolution", "subject_no_f", "slice_scan_no", "age_range",
-                "acquisition_protocol", "format", "segmentation_mask", "preprocessing", "disease",
-                "healthy_control", "staging_information", "clinical_data_score",
-                "histopathology", "lab_data"
-            ]) for cat in categories}
+    def charting_wrapper(query_string: str) -> str:
+        """Wrapper for create_chart. Input: 'chart_type|pandas_query'."""
+        try:
+            parts = query_string.split('|', 1)
+            if len(parts) != 2: return "Error: Invalid input format. Expected 'chart_type|pandas_query'."
+            chart_type, data_query = parts[0].strip(), parts[1].strip()
+            if not data_query: return "Error: 'pandas_query' part of the input is empty."
+            return create_chart(data_query=data_query, chart_type=chart_type)
+        except Exception as e:
+            return f"An unexpected error occurred in the plotting wrapper: {e}"
 
-    # Chat Interface
-    st.header("Chat with NeuroAIHub Agent")
-    if 'chat_history' not in st.session_state:
-        st.session_state['chat_history'] = [{"role": "assistant", "content": "Hello! I'm NeuroAIHub, your assistant for exploring neuroradiology datasets. Ask me anything about datasets, categories, or trends!"}]
+    # --- Tool Definitions ---
+    hybrid_finder_tool = Tool(name="hybrid_dataset_finder", func=hybrid_dataset_finder, description="Use this as the primary tool to find specific datasets based on criteria like category, disease, access type, modality, institution, country, format, segmentation_mask, etc. The input should be the user's full query.")
+    category_summary_tool = Tool(name="category_summarizer", func=get_category_summary, description="Use this tool ONLY when the user asks for a general overview, summary, or a full list of datasets for a broad category.")
+    python_repl_tool = Tool(name="python_code_interpreter", func=PythonAstREPLTool(locals={"pd": pd, "combined_df": _combined_df}).run, description="CRITICAL: Use this tool for any questions that involve ranking, comparison, or calculation (e.g., 'most', 'least', 'highest', 'compare', 'how many'). This tool is for performing Python-based analysis on the 'combined_df' pandas DataFrame to answer a question. The input MUST be a valid Python command.")
+    plotting_tool = Tool(name="chart_generator", func=charting_wrapper, description="Use this to create and display a chart from data. The input MUST be a single string separated by a pipe `|` in the format: 'chart_type|pandas_query'. Example: \"pie|combined_df['access_type'].value_counts()\"")
 
-    # Display chat history
-    for message in st.session_state['chat_history']:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    tools = [hybrid_finder_tool, category_summary_tool, python_repl_tool, plotting_tool]
 
-    # User input
-    prompt = st.chat_input("Ask about neuroradiology datasets:")
-    if prompt:
-        st.session_state['chat_history'].append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+    # --- Agent Prompt ---
+    prompt_template = """
+    You are NeuroAI, a helpful and friendly assistant for exploring neuroradiology datasets. Your goal is to answer user questions accurately by using the tools provided.
+    You have access to the following tools: {tools}
+    To use a tool, please use the following format:
+    ```
+    Thought: Do I need to use a tool? Yes
+    Action: the action to take, should be one of [{tool_names}]
+    Action Input: the input to the action
+    Observation: the result of the action
+    ```
+    When you have a response to say to the user, or if you do not need to use a tool, you MUST use the format:
+    ```
+    Thought: Do I need to use a tool? No
+    Final Answer: [your response here]
+    ```
+    --- IMPORTANT RULES ---
+    1. For "summary" or "overview" of a category, use `category_summarizer`.
+    2. To *find* or *list* specific datasets, use `hybrid_dataset_finder`.
+    3. To "plot", "chart", "graph", or "visualize", use `chart_generator`. The input MUST be a single string 'chart_type|pandas_query'. Example: "pie|combined_df['access_type'].value_counts()"
+    4. For ranking/comparison ("most", "highest", "compare"), FIRST use `hybrid_dataset_finder` to get relevant data, THEN use `python_code_interpreter` to analyze it.
+    
+    Begin!
 
-        with st.spinner("Processing your query..."):
-            query_result = process_query(prompt, st.session_state['excel_book'], categories)
-            response = query_result["response"]
-            filters = query_result["filters"]
-            follow_up_suggestions = query_result["follow_up_suggestions"]
+    Previous conversation history (last 5 turns):
+    {chat_history}
 
-            # Apply filters to retrieve datasets if specified
-            df = None
-            if filters:
-                category = next((f["value"] for f in filters if f["column"] == "category"), None)
-                if category and category.capitalize() in categories:
-                    df = st.session_state['excel_book'][category.capitalize()]
-                else:
-                    all_dfs = [df for df in st.session_state['excel_book'].values() if not df.empty]
-                    df = pd.concat(all_dfs) if all_dfs else pd.DataFrame()
-                df = apply_filters(df, filters)
+    New input: {input}
+    {agent_scratchpad}
+    """
+    prompt = PromptTemplate.from_template(prompt_template)
 
-            response_text = format_response(response, df, follow_up_suggestions)
-            st.session_state['chat_history'].append({"role": "assistant", "content": response_text})
-            with st.chat_message("assistant"):
-                st.markdown(response_text)
+    # --- Agent Executor ---
+    agent = create_react_agent(_llm, tools, prompt)
+    agent_executor = AgentExecutor(
+        agent=agent, tools=tools, verbose=True,
+        handle_parsing_errors="I'm sorry, I had trouble processing that request. Please try rephrasing.",
+        return_intermediate_steps=True,
+        max_iterations=7
+    )
+    return agent_executor, ALL_DISPLAY_COLUMNS
 
-if __name__ == "__main__":
-    main()
+agent_executor, ALL_DISPLAY_COLUMNS = setup_agent(llm, combined_df, dataframes, sheet_names)
+
+
+# --- STREAMLIT CHAT UI ---
+if "memory" not in st.session_state:
+    st.session_state.memory = ConversationBufferWindowMemory(k=5, memory_key="chat_history", return_messages=True)
+if "messages" not in st.session_state:
+    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you explore the neuroradiology datasets today?"}]
+
+# Display chat messages
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+        if "table" in msg and msg["table"] is not None:
+            st.dataframe(msg["table"])
+        if "chart" in msg and msg["chart"] is not None:
+            st.pyplot(msg["chart"])
+
+# Handle user input
+if user_query := st.chat_input("Ask about datasets, request a summary, or ask for a plot..."):
+    st.session_state.messages.append({"role": "user", "content": user_query})
+    st.chat_message("user").markdown(user_query)
+
+    with st.chat_message("assistant"):
+        with st.spinner("🧠 Thinking..."):
+            try:
+                inputs = {"input": user_query, "chat_history": st.session_state.memory.load_memory_variables({})['chat_history']}
+                response = agent_executor.invoke(inputs)
+
+                assistant_message = {"role": "assistant"}
+                final_answer = response.get('output', "I'm sorry, I encountered an issue.")
+                assistant_message["content"] = final_answer
+                st.markdown(final_answer)
+
+                if 'intermediate_steps' in response and response['intermediate_steps']:
+                    last_action, last_observation = response['intermediate_steps'][-1]
+                    
+                    if last_action.tool == 'hybrid_dataset_finder':
+                        tool_output = json.loads(last_observation)
+                        if 'data' in tool_output:
+                            df = pd.DataFrame(tool_output['data'])
+                            df_display = df[[col for col in ALL_DISPLAY_COLUMNS if col in df.columns]]
+                            st.dataframe(df_display)
+                            assistant_message["table"] = df_display
+
+                    elif last_action.tool == 'category_summarizer':
+                        tool_output = json.loads(last_observation)
+                        target_category = tool_output.get("category_name")
+                        if target_category and target_category in dataframes:
+                            df = dataframes[target_category]
+                            df_display = df[[col for col in ALL_DISPLAY_COLUMNS if col in df.columns]]
+                            st.dataframe(df_display)
+                            assistant_message["table"] = df_display
+                    
+                    elif last_action.tool == 'chart_generator' and "Error" not in last_observation:
+                        fig = plt.gcf()
+                        st.pyplot(fig)
+                        assistant_message["chart"] = fig
+
+                st.session_state.memory.save_context(inputs, {"output": final_answer})
+                st.session_state.messages.append(assistant_message)
+
+            except Exception as e:
+                error_message = f"An unexpected error occurred: {e}"
+                st.error(error_message)
+                st.session_state.messages.append({"role": "assistant", "content": error_message})
