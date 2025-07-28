@@ -37,19 +37,28 @@ st.caption("Your conversational assistant for neuroradiology datasets. I can fin
 
 
 # --- API KEY & LLM SETUP ---
-load_dotenv()
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# For deployment, use st.secrets. For local development, you can use python-dotenv.
+try:
+    # This is the recommended way for deployment on Streamlit Community Cloud
+    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+except (FileNotFoundError, KeyError):
+    # Fallback for local development using a .env file
+    load_dotenv()
+    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
 if not OPENAI_API_KEY:
-    st.warning("⚠️ API key not found. Please set OPENAI_API_KEY in Streamlit secrets or environment.")
+    st.error("OPENAI_API_KEY not found. Please set it in your Streamlit secrets or a local .env file.", icon="🚨")
     st.stop()
 
-# Set up the LLM using the provided API key from secrets
+
+# Set up the LLM using the provided API key
 llm = ChatOpenAI(
     openai_api_key=OPENAI_API_KEY,
     model_name='gpt-4.1-mini',
     base_url="https://api.avalai.ir/v1",
     temperature=0
 )
+
 
 # --- DATA LOADING (Cached to run only once) ---
 @st.cache_resource
