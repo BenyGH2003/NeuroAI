@@ -3,6 +3,7 @@
 
 import streamlit as st
 import pandas as pd
+from dotenv import load_dotenv
 import re
 import os
 import json
