@@ -45,7 +45,7 @@ if not OPENAI_API_KEY:
 
 # Set up the LLM using the provided API key from secrets
 llm = ChatOpenAI(
-    openai_api_key=AVALAI_API_KEY,
+    openai_api_key=OPENAI_API_KEY,
     model_name='gpt-4.1-mini',
     base_url="https://api.avalai.ir/v1",
     temperature=0
