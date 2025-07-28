@@ -4,7 +4,6 @@
 import streamlit as st
 import pandas as pd
 import re
-from dotenv import load_dotenv
 import os
 import json
 from typing import Optional
